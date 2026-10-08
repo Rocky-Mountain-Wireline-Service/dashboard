@@ -1,4 +1,5 @@
 import Stripe from 'stripe';
+import { requireUser } from '../lib/auth';
 
 interface BillingSummary {
   subscription: {
@@ -41,14 +42,13 @@ interface BillingSummary {
 }
 
 export async function handler(event: { queryStringParameters: Record<string, string> | null; headers: Record<string, string> }) {
-  const authHeader = event.headers['authorization'] || event.headers['Authorization'];
-  if (!authHeader) {
-    return { statusCode: 401, body: JSON.stringify({ error: 'Unauthorized' }) };
-  }
+  const auth = await requireUser(event.headers);
+  if ('response' in auth) return auth.response;
 
-  const customerId = event.queryStringParameters?.customerId;
+  // Fixed on the server, never read from the request — see the portal function.
+  const customerId = process.env.STRIPE_CUSTOMER_ID;
   if (!customerId) {
-    return { statusCode: 400, body: JSON.stringify({ error: 'Missing customerId' }) };
+    return { statusCode: 500, body: JSON.stringify({ error: 'Billing is not configured' }) };
   }
 
   const stripeConfig = process.env.STRIPE_CONFIG;

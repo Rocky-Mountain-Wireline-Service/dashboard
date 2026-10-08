@@ -29,7 +29,7 @@ const config: DashboardConfig = {
     "analyticsId": "G-KQZRGVYZ06"
   },
   "contentKit": {
-    "enabled": true,
+    "enabled": false,
     "sections": [
       {
         "id": "your_business",
@@ -85,6 +85,12 @@ const config: DashboardConfig = {
     "welcomeMessage": "",
     "completionEmailNotify": true
   }
+};
+
+/** Which optional sections exist for this client. Drives the menu and the routes. */
+export const features = {
+  contentKit: Boolean(config.contentKit?.enabled),
+  billing: Boolean(config.billing?.stripeCustomerId),
 };
 
 export default config;

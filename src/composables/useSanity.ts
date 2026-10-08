@@ -1,16 +1,16 @@
-const SANITY_PROXY_URL = '/.netlify/functions/sanity-proxy';
+import { useApi } from '@/composables/useApi';
 
-export async function useSanityQuery<T = unknown>(query: string, params?: Record<string, unknown>): Promise<T> {
-  const res = await fetch(SANITY_PROXY_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query, params }),
-  });
+/** Runs a GROQ query through the server-side proxy. Call from `setup`. */
+export function useSanity() {
+  const api = useApi();
 
-  if (!res.ok) {
-    throw new Error(`Sanity proxy error: ${res.status}`);
-  }
-
-  const data = await res.json();
-  return data.result as T;
+  return async function query<T = unknown>(groq: string, params?: Record<string, unknown>): Promise<T> {
+    const res = await api('sanity-proxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: groq, params }),
+    });
+    if (!res.ok) throw new Error(`Sanity proxy error: ${res.status}`);
+    return (await res.json()).result as T;
+  };
 }

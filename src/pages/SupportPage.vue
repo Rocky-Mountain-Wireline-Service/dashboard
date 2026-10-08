@@ -4,8 +4,10 @@ import { useAuth0 } from '@auth0/auth0-vue';
 import DashboardLayout from '@/components/layout/DashboardLayout.vue';
 import { Send, CheckCircle } from 'lucide-vue-next';
 import config from '@/config/dashboard';
+import { useApi } from '@/composables/useApi';
 
 const { user } = useAuth0();
+const api = useApi();
 
 const form = ref({
   name: user.value?.name || '',
@@ -40,23 +42,15 @@ async function submit() {
   };
 
   try {
-    // Primary: Netlify function
-    const res = await fetch('/.netlify/functions/receive-support-request', {
+    const res = await api('receive-support-request', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
 
-    if (!res.ok) throw new Error(`Server returned ${res.status}`);
-
-    // Optional: webhook notification (Slack, email, etc.)
-    const webhookUrl = import.meta.env.VITE_SUPPORT_WEBHOOK_URL;
-    if (webhookUrl) {
-      fetch(webhookUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      }).catch(() => {}); // fire-and-forget
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || 'Your request could not be sent. Please try again.');
     }
 
     sent.value = true;
@@ -90,18 +84,18 @@ async function submit() {
         </p>
 
         <div class="support__field">
-          <label class="support__label">Name</label>
-          <input v-model="form.name" type="text" class="support__input" />
+          <label class="support__label" for="support-name">Name</label>
+          <input v-model="form.name" id="support-name" type="text" class="support__input" />
         </div>
 
         <div class="support__field">
-          <label class="support__label">Email</label>
-          <input v-model="form.email" type="email" class="support__input" />
+          <label class="support__label" for="support-email">Email</label>
+          <input v-model="form.email" id="support-email" type="email" class="support__input" />
         </div>
 
         <div class="support__field">
-          <label class="support__label">Category</label>
-          <select v-model="form.category" class="support__select">
+          <label class="support__label" for="support-category">Category</label>
+          <select v-model="form.category" id="support-category" class="support__select">
             <option v-for="cat in CATEGORIES" :key="cat.value" :value="cat.value">
               {{ cat.label }}
             </option>
@@ -109,16 +103,16 @@ async function submit() {
         </div>
 
         <div class="support__field">
-          <label class="support__label">Subject *</label>
-          <input v-model="form.subject" type="text" class="support__input" placeholder="Brief summary of your request" required />
+          <label class="support__label" for="support-subject">Subject *</label>
+          <input v-model="form.subject" id="support-subject" type="text" class="support__input" placeholder="Brief summary of your request" required />
         </div>
 
         <div class="support__field">
-          <label class="support__label">Message *</label>
-          <textarea v-model="form.message" class="support__textarea" rows="6" placeholder="Describe what you need help with in detail" required></textarea>
+          <label class="support__label" for="support-message">Message *</label>
+          <textarea v-model="form.message" id="support-message" class="support__textarea" rows="6" placeholder="Describe what you need help with in detail" required></textarea>
         </div>
 
-        <p v-if="error" class="support__error">{{ error }}</p>
+        <p v-if="error" class="support__error" role="alert">{{ error }}</p>
 
         <button type="submit" class="support__submit" :disabled="sending">
           <Send :size="16" />
@@ -199,7 +193,7 @@ async function submit() {
   gap: 0.5rem;
   padding: 0.625rem 1.5rem;
   background-color: var(--color-primary);
-  color: var(--color-text-inverse);
+  color: var(--color-on-primary);
   font-size: 0.875rem;
   font-weight: 600;
   border: none;

@@ -1,6 +1,7 @@
 import { watch } from 'vue';
 import { createRouter, createWebHistory } from 'vue-router';
 import { useAuth0 } from '@auth0/auth0-vue';
+import { features } from '@/config/dashboard';
 
 const DashboardHome = () => import('@/pages/DashboardHome.vue');
 const AnalyticsPage = () => import('@/pages/AnalyticsPage.vue');
@@ -12,9 +13,9 @@ const NotFound = () => import('@/pages/NotFound.vue');
 const routes = [
   { path: '/', name: 'Dashboard', component: DashboardHome },
   { path: '/analytics', name: 'Analytics', component: AnalyticsPage },
-  { path: '/content-kit', name: 'ContentKit', component: ContentKitPage },
+  ...(features.contentKit ? [{ path: '/content-kit', name: 'ContentKit', component: ContentKitPage }] : []),
   { path: '/support', name: 'Support', component: SupportPage },
-  { path: '/billing', name: 'Billing', component: BillingPage },
+  ...(features.billing ? [{ path: '/billing', name: 'Billing', component: BillingPage }] : []),
   { path: '/:pathMatch(.*)*', name: 'NotFound', component: NotFound },
 ];
 

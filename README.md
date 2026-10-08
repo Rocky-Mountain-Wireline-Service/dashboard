@@ -1,40 +1,52 @@
-# pws-dashboard-template
+# RMWS Dashboard
 
-This is a **scaffold template** — not a live dashboard. It is cloned and configured by [pws-scaffolder](https://github.com/EricPhifer/pws-scaffolder) to generate client-specific dashboard projects.
+The private dashboard for Rocky Mountain Wireline Service: site analytics in plain language, quick links, and a way to send a support request. Sign-in is through Auth0.
 
-## Stack
+Vite, Vue 3, TypeScript, Tailwind CSS 4, Pinia, Chart.js, Netlify Functions.
 
-Vite, Vue 3, TypeScript, Tailwind CSS 4, Vue Router, Pinia, Lucide Vue Next, @vueuse/core, @auth0/auth0-vue, @sanity/client
+## Running it
 
-## Auth
+```
+pnpm install
+netlify dev        # serves the app and the functions together
+```
 
-All routes require Auth0 authentication. The router `beforeEach` guard redirects unauthenticated users to Auth0 login. After login, users return to the dashboard home.
+`pnpm dev` serves the app alone; every data call will fail without the functions. `pnpm build` type-checks the app and the functions, then builds.
 
-## Widget System
+## What is in it
 
-`DashboardHome` reads `enabledWidgets` from `src/config/dashboard.ts` and renders only the listed widgets. Each widget is self-contained. The scaffolder enables/disables widgets per client by writing the config — no component code changes needed.
+| Section | Needs |
+|---|---|
+| Overview | Nothing. Links come from `src/config/dashboard.ts`. |
+| Analytics | A Google service account with Viewer access to the GA4 property. |
+| Contact & Support | A Resend API key and a verified sending domain. |
+| Billing | Hidden until `billing.stripeCustomerId` is added to the config. |
+| Content Kit | Hidden while `contentKit.enabled` is `false` in the config. |
 
-Available widgets: `links`, `siteAnalytics`, `tutorials`, `contentEditors`
+A section that is not set up is left out of the menu and has no route.
 
-## Sanity Proxy
+## Environment variables
 
-`netlify/functions/sanity-proxy.ts` accepts GROQ queries via POST, runs them against Sanity using `NETLIFY_SANITY_PROJECT_ID` (server-side env var), and returns results. This keeps the project ID out of the client bundle. The `useSanity.ts` composable calls this function.
+`.env.example` lists every variable with a note on each. Only the two `VITE_AUTH0_*` values reach the browser; everything else is read by the server functions and must be set in Netlify.
 
-`NETLIFY_SANITY_PROJECT_ID` is intentionally **not** prefixed with `VITE_` — it is server-side only.
+### Connecting Google Analytics
 
-## Placeholder Pattern
+1. In Google Cloud, create a service account and a JSON key for it. Enable the **Google Analytics Data API** on that project.
+2. In GA4 Admin → Property access management, add the service account's email as a **Viewer**.
+3. Set `GA4_PROPERTY_ID` (the numeric ID from Admin → Property details, not the `G-…` measurement ID), `GA4_CLIENT_EMAIL` and `GA4_PRIVATE_KEY` (the key's `private_key` value, on one line with `\n` for newlines).
 
-Same `##PLACEHOLDER##` pattern as pws-foundation-template. Theme variables, client name, and VSCode colors are replaced by the scaffolder.
+Until these are set the Analytics page says it is being connected rather than showing an error.
 
-## Setup After Scaffolding
+The "People getting in touch" figures come from three events the public site sends: `generate_lead` (a form sent), `contact_click` (a phone number or email address tapped) and `quote_cta_click` (a Contact Sales button).
 
-1. Create an Auth0 tenant and application — paste domain + client ID into `.env`
-2. Create or reuse a Sanity project — paste project ID into `.env` as `NETLIFY_SANITY_PROJECT_ID`
-3. Create a Netlify site — connect the GitHub repo
-4. Set `NETLIFY_SANITY_PROJECT_ID` in Netlify environment variables (not in the client `.env`)
+## Who can get in
 
-## Do Not
+Every function verifies the caller's Auth0 token with Auth0 before doing anything; a missing or invalid token gets a 401.
 
-- Run this template directly — it requires Auth0 and Sanity credentials
-- Add client-specific widget config here — it goes in `project-config.json`
-- Prefix `NETLIFY_SANITY_PROJECT_ID` with `VITE_` — it must stay server-side
+`ALLOWED_EMAILS` narrows access to named addresses or domains, for example `eric@ericphiferllc.com,@rmws.com`. If it is empty, any account in the Auth0 tenant is let in, so either set it or make sure sign-ups are disabled in Auth0.
+
+The Auth0 application needs the dashboard's address in **Allowed Callback URLs**, **Allowed Logout URLs** and **Allowed Web Origins**.
+
+## Deploying
+
+Netlify builds the `production` branch. Day-to-day work goes to `sandbox`; branch deploys for `sandbox` should stay off so they cost no build credits.

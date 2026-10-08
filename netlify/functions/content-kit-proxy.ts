@@ -9,6 +9,8 @@
  * Env: TURSO_DATABASE_URL, TURSO_AUTH_TOKEN
  */
 import { createClient } from '@libsql/client';
+import { requireUser } from '../lib/auth';
+import config from '../../src/config/dashboard';
 
 /** Map section IDs to their DB column names */
 const SECTION_COLUMNS: Record<string, string[]> = {
@@ -95,7 +97,7 @@ export async function handler(event: {
   body: string | null;
 }) {
   const corsHeaders = {
-    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Origin': process.env.URL || '*',
     'Access-Control-Allow-Headers': 'Authorization, Content-Type',
     'Access-Control-Allow-Methods': 'GET, PUT, OPTIONS',
     'Content-Type': 'application/json',
@@ -105,9 +107,17 @@ export async function handler(event: {
     return { statusCode: 204, headers: corsHeaders, body: '' };
   }
 
-  const authHeader = event.headers['authorization'] || event.headers['Authorization'];
-  if (!authHeader?.startsWith('Bearer ')) {
-    return { statusCode: 401, headers: corsHeaders, body: JSON.stringify({ error: 'Unauthorized' }) };
+  const auth = await requireUser(event.headers);
+  if ('response' in auth) return { ...auth.response, headers: corsHeaders };
+
+  // The database is shared across clients. This dashboard may only touch its
+  // own record, whatever ID the request names.
+  const requestedId =
+    event.httpMethod === 'GET'
+      ? event.queryStringParameters?.clientId
+      : (() => { try { return JSON.parse(event.body || '{}').clientId; } catch { return undefined; } })();
+  if (requestedId && requestedId !== config.clientId) {
+    return { statusCode: 403, headers: corsHeaders, body: JSON.stringify({ error: 'Forbidden' }) };
   }
 
   const dbUrl = process.env.TURSO_DATABASE_URL;

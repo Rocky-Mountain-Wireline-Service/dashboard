@@ -1,16 +1,14 @@
 import Stripe from 'stripe';
+import { requireUser } from '../lib/auth';
 
 interface RequestBody {
-  customerId: string;
+  customerId?: string;
   returnUrl: string;
 }
 
 export async function handler(event: { body: string | null; headers: Record<string, string> }) {
-  // Auth check — require Authorization header
-  const authHeader = event.headers['authorization'] || event.headers['Authorization'];
-  if (!authHeader) {
-    return { statusCode: 401, body: JSON.stringify({ error: 'Unauthorized' }) };
-  }
+  const auth = await requireUser(event.headers);
+  if ('response' in auth) return auth.response;
 
   if (event.body === null) {
     return { statusCode: 400, body: JSON.stringify({ error: 'Missing request body' }) };
@@ -24,10 +22,13 @@ export async function handler(event: { body: string | null; headers: Record<stri
   try {
     const { secretKey } = JSON.parse(stripeConfig);
     const stripe = new Stripe(secretKey);
-    const { customerId, returnUrl } = JSON.parse(event.body) as RequestBody;
+    const { returnUrl } = JSON.parse(event.body) as RequestBody;
 
+    // The customer is fixed on the server. Taking it from the request would let
+    // any signed-in user open the billing portal of any customer ID they typed.
+    const customerId = process.env.STRIPE_CUSTOMER_ID;
     if (!customerId) {
-      return { statusCode: 400, body: JSON.stringify({ error: 'Missing customerId' }) };
+      return { statusCode: 500, body: JSON.stringify({ error: 'Billing is not configured' }) };
     }
 
     const session = await stripe.billingPortal.sessions.create({

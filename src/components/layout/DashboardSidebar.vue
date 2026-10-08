@@ -19,7 +19,7 @@ import {
   ChevronLeft,
   ChevronRight,
 } from 'lucide-vue-next';
-import config from '@/config/dashboard';
+import config, { features } from '@/config/dashboard';
 
 defineProps<{ mobileOpen: boolean }>();
 const emit = defineEmits<{ (e: 'toggle-mobile'): void }>();
@@ -40,12 +40,14 @@ function toggleDarkMode() {
 
 interface NavItem { to: string; label: string; icon: unknown }
 
+// A section only appears once it has something behind it; an unconfigured one
+// would otherwise be a menu item leading to a placeholder.
 const navItems: NavItem[] = [
-    { to: '/', label: 'Overview', icon: LayoutDashboard },
+  { to: '/', label: 'Overview', icon: LayoutDashboard },
   { to: '/analytics', label: 'Analytics', icon: BarChart3 },
-  { to: '/content-kit', label: 'Content Kit', icon: ClipboardList },
+  ...(features.contentKit ? [{ to: '/content-kit', label: 'Content Kit', icon: ClipboardList }] : []),
   { to: '/support', label: 'Contact & Support', icon: MessageSquare },
-  { to: '/billing', label: 'Billing', icon: CreditCard },
+  ...(features.billing ? [{ to: '/billing', label: 'Billing', icon: CreditCard }] : []),
 ];
 </script>
 

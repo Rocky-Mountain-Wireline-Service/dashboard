@@ -74,7 +74,7 @@ const cards = computed(() => config.links.filter(l => !!l.description));
   padding: 0.4rem 0.85rem;
   border-radius: 999px;
   background-color: var(--color-primary);
-  color: var(--color-text-inverse, #fff);
+  color: var(--color-on-primary);
   font-size: 0.8125rem;
   font-weight: 500;
   text-decoration: none;

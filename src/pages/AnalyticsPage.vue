@@ -1,400 +1,287 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick, watch } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import DashboardLayout from '@/components/layout/DashboardLayout.vue';
-import { Users, Eye, Clock, TrendingUp, TrendingDown, Minus, ExternalLink, RefreshCw } from 'lucide-vue-next';
-import { Chart, BarElement, CategoryScale, LinearScale, Tooltip } from 'chart.js';
+import {
+  Users, Eye, Clock, FileText, Phone, MousePointerClick,
+  TrendingUp, TrendingDown, Minus, RefreshCw, Settings,
+} from 'lucide-vue-next';
+import { Chart, BarController, BarElement, CategoryScale, LinearScale, Tooltip } from 'chart.js';
 import config from '@/config/dashboard';
+import {
+  useAnalytics, formatDuration, pctChange, trendOf,
+  type Period,
+} from '@/composables/useAnalytics';
 
-Chart.register(BarElement, CategoryScale, LinearScale, Tooltip);
+Chart.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip);
 
-const analytics = config.analytics;
-const internalRoutes = analytics?.internalRoutes ?? ['/analytics', '/billing', '/content-kit', '/support'];
-const conversionPage = analytics?.conversionPage ?? '/contact';
-const conversionLabel = conversionPage.replace(/^\//, '').replace(/-/g, ' ');
-const isGA4 = analytics?.provider === 'ga4';
+const conversionPage = config.analytics?.conversionPage ?? '/contact';
 
-// ─── State ──────────────────────────────────────────────────────────────────
-
-const loading = ref(true);
-const error = ref<string | null>(null);
-
-interface AnalyticsData {
-  pageviews: number;
-  visitors: number;
-  seconds_on_page: number;
-  pages: { value: string; pageviews: number; visitors: number }[];
-  referrers: { value: string; pageviews: number; visitors: number }[];
-}
-
-const current = ref<AnalyticsData | null>(null);
-const previous = ref<AnalyticsData | null>(null);
-const period = ref<'today' | '7d' | '30d'>('30d');
-const showInternal = ref(false);
+const { state, report, message, load } = useAnalytics();
+const period = ref<Period>('30d');
 const chartCanvas = ref<HTMLCanvasElement | null>(null);
 let chartInstance: Chart | null = null;
 
-const PERIOD_LABELS: Record<string, string> = {
+const PERIOD_LABELS: Record<Period, string> = {
   today: 'Today',
   '7d': 'Last 7 days',
   '30d': 'Last 30 days',
 };
-
-const PERIOD_WORDS: Record<string, string> = {
+const PERIOD_WORDS: Record<Period, string> = {
   today: 'today',
-  '7d': 'this week',
-  '30d': 'this month',
+  '7d': 'in the last 7 days',
+  '30d': 'in the last 30 days',
 };
-
-const PREV_PERIOD_WORDS: Record<string, string> = {
+const PREV_PERIOD_WORDS: Record<Period, string> = {
   today: 'yesterday',
-  '7d': 'last week',
-  '30d': 'last month',
+  '7d': 'the 7 days before',
+  '30d': 'the 30 days before',
 };
-
-// ─── Date helpers ───────────────────────────────────────────────────────────
-
-function getDateRange(p: string) {
-  const now = new Date();
-  const fmt = (d: Date) => d.toISOString().slice(0, 10);
-
-  if (p === 'today') {
-    const yesterday = new Date(now); yesterday.setDate(now.getDate() - 1);
-    const twoDaysAgo = new Date(now); twoDaysAgo.setDate(now.getDate() - 2);
-    return { start: fmt(now), end: fmt(now), prevStart: fmt(yesterday), prevEnd: fmt(yesterday) };
-  }
-
-  const days = p === '7d' ? 7 : 30;
-  const start = new Date(now); start.setDate(now.getDate() - days);
-  const prevStart = new Date(start); prevStart.setDate(start.getDate() - days);
-  const prevEnd = new Date(start); prevEnd.setDate(start.getDate() - 1);
-
-  return { start: fmt(start), end: fmt(now), prevStart: fmt(prevStart), prevEnd: fmt(prevEnd) };
-}
-
-// ─── Data fetching ──────────────────────────────────────────────────────────
 
 async function fetchAnalytics() {
-  loading.value = true;
-  error.value = null;
-
-  try {
-    const hostname = analytics?.simpleAnalyticsId || config.clientDomain;
-    const { start, end, prevStart, prevEnd } = getDateRange(period.value);
-
-    const [currentRes, previousRes] = await Promise.all([
-      fetch(`/.netlify/functions/analytics-proxy?hostname=${hostname}&start=${start}&end=${end}`),
-      fetch(`/.netlify/functions/analytics-proxy?hostname=${hostname}&start=${prevStart}&end=${prevEnd}`),
-    ]);
-
-    if (!currentRes.ok) throw new Error(`Analytics request failed: ${currentRes.status}`);
-
-    current.value = await currentRes.json();
-    if (previousRes.ok) {
-      previous.value = await previousRes.json();
-    }
-
-    await nextTick();
-    renderChart();
-  } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Failed to load analytics';
-  } finally {
-    loading.value = false;
-  }
+  await load(period.value);
+  await nextTick();
+  renderChart();
 }
 
-function changePeriod(p: 'today' | '7d' | '30d') {
+function changePeriod(p: Period) {
   period.value = p;
   fetchAnalytics();
 }
 
-// ─── Computations ───────────────────────────────────────────────────────────
+const plural = (n: number, one: string, many: string) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
 
-function pctChange(cur: number, prev: number): number {
-  if (!prev) return cur > 0 ? 100 : 0;
-  return Math.round(((cur - prev) / prev) * 100);
-}
+// ─── Story ──────────────────────────────────────────────────────────────────
 
-function formatDuration(seconds: number): string {
-  if (seconds < 60) return `${Math.round(seconds)}s`;
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.round(seconds % 60);
-  return `${mins}m ${secs}s`;
-}
-
-function trendDirection(change: number): 'up' | 'down' | 'flat' {
-  if (change > 5) return 'up';
-  if (change < -5) return 'down';
-  return 'flat';
-}
-
-function trendLabel(dir: 'up' | 'down' | 'flat'): string {
-  if (dir === 'up') return 'Trending up';
-  if (dir === 'down') return 'Declining';
-  return 'About the same';
-}
-
-const visitorChange = computed(() => {
-  if (!current.value || !previous.value) return 0;
-  return pctChange(current.value.visitors, previous.value.visitors);
-});
-
-// ─── Story headline ─────────────────────────────────────────────────────────
+const visitorChange = computed(() =>
+  report.value ? pctChange(report.value.current.visitors, report.value.previous.visitors) : null
+);
 
 const storyHeadline = computed(() => {
-  if (!current.value) return '';
-  const v = current.value.visitors;
-  const periodWord = PERIOD_WORDS[period.value];
-  const prevWord = PREV_PERIOD_WORDS[period.value];
+  if (!report.value) return '';
+  const v = report.value.current.visitors;
   const change = visitorChange.value;
+  const prev = PREV_PERIOD_WORDS[period.value];
 
-  let trend: string;
-  if (change > 50) trend = `nearly double ${prevWord}`;
-  else if (change > 10) trend = `up from ${prevWord}`;
-  else if (change >= -10) trend = `about the same as ${prevWord}`;
-  else trend = `down from ${prevWord}`;
+  let trend = '';
+  if (change === null) trend = '';
+  else if (change > 50) trend = ` — well up on ${prev}`;
+  else if (change > 10) trend = ` — up from ${prev}`;
+  else if (change >= -10) trend = ` — about the same as ${prev}`;
+  else trend = ` — down from ${prev}`;
 
-  return `${v.toLocaleString()} ${v === 1 ? 'person' : 'people'} visited your site ${periodWord} — ${trend}.`;
+  return `${plural(v, 'person', 'people')} visited your site ${PERIOD_WORDS[period.value]}${trend}.`;
 });
 
 const storySubline = computed(() => {
-  if (!current.value) return '';
-  const pages = current.value.pages || [];
-  const homepageVisitors = pages.find(p => p.value === '/')?.visitors ?? current.value.visitors;
-  const deepExplorers = Math.max(0, current.value.visitors - homepageVisitors);
-  if (deepExplorers === 0) return 'All traffic landed on your homepage. No one explored further pages.';
-  return `Most traffic landed on your homepage. Only ${deepExplorers.toLocaleString()} ${deepExplorers === 1 ? 'person' : 'people'} explored further.`;
+  if (!report.value) return '';
+  const { formSubmissions, contactClicks } = report.value.current;
+  if (!formSubmissions && !contactClicks) {
+    return 'No one sent a form or tapped a phone number or email address in that time.';
+  }
+  return `They sent ${plural(formSubmissions, 'form', 'forms')} and tapped a phone number or email address ${plural(contactClicks, 'time', 'times')}.`;
 });
 
 // ─── Metric cards ───────────────────────────────────────────────────────────
 
-const metricCards = computed(() => {
-  if (!current.value) return [];
-  const c = current.value;
-  const p = previous.value;
+function trendLabel(change: number | null): string {
+  if (change === null) return 'No earlier figure to compare';
+  const dir = trendOf(change);
+  if (dir === 'flat') return 'About the same';
+  return `${dir === 'up' ? 'Up' : 'Down'} ${Math.abs(change)}%`;
+}
+
+const trafficCards = computed(() => {
+  if (!report.value) return [];
+  const { current: c, previous: p } = report.value;
   return [
-    { label: 'Visitors', value: c.visitors.toLocaleString(), change: p ? pctChange(c.visitors, p.visitors) : 0, icon: Users },
-    { label: 'Page views', value: c.pageviews.toLocaleString(), change: p ? pctChange(c.pageviews, p.pageviews) : 0, icon: Eye },
-    { label: 'Avg. time on page', value: formatDuration(c.seconds_on_page || 0), change: p ? pctChange(c.seconds_on_page, p.seconds_on_page) : 0, icon: Clock },
+    { label: 'Visitors', value: c.visitors.toLocaleString(), change: pctChange(c.visitors, p.visitors), icon: Users },
+    { label: 'Page views', value: c.pageviews.toLocaleString(), change: pctChange(c.pageviews, p.pageviews), icon: Eye },
+    { label: 'Avg. visit length', value: formatDuration(c.avgSessionSeconds), change: pctChange(c.avgSessionSeconds, p.avgSessionSeconds), icon: Clock },
   ];
 });
 
-// ─── Visitor journey funnel ─────────────────────────────────────────────────
+const enquiryCards = computed(() => {
+  if (!report.value) return [];
+  const { current: c, previous: p } = report.value;
+  return [
+    { label: 'Forms sent', value: c.formSubmissions.toLocaleString(), change: pctChange(c.formSubmissions, p.formSubmissions), icon: FileText },
+    { label: 'Phone & email taps', value: c.contactClicks.toLocaleString(), change: pctChange(c.contactClicks, p.contactClicks), icon: Phone },
+    { label: 'Contact Sales clicks', value: c.ctaClicks.toLocaleString(), change: pctChange(c.ctaClicks, p.ctaClicks), icon: MousePointerClick },
+  ];
+});
+
+// ─── Visitor journey ────────────────────────────────────────────────────────
 
 const funnel = computed(() => {
-  if (!current.value) return [];
-  const totalVisitors = current.value.visitors || 1;
-  const pages = current.value.pages || [];
-
-  const exploredVisitors = pages
-    .filter(p => p.value !== '/' && !internalRoutes.includes(p.value))
-    .reduce((sum, p) => sum + (p.visitors || 0), 0);
-
-  const conversionVisitors = pages.find(p => p.value === conversionPage)?.visitors ?? 0;
+  if (!report.value) return [];
+  const { current: c, pages } = report.value;
+  const total = c.visitors;
+  const reached = pages.find((p) => p.path.replace(/\/$/, '') === conversionPage)?.visitors ?? 0;
+  const pct = (n: number) => (total ? Math.min(100, Math.round((n / total) * 100)) : 0);
 
   return [
-    { label: 'Visited your site', count: totalVisitors, pct: 100, color: 'var(--color-primary)' },
-    { label: 'Explored a page', count: Math.min(exploredVisitors, totalVisitors), pct: Math.round((Math.min(exploredVisitors, totalVisitors) / totalVisitors) * 100), color: 'var(--color-secondary)' },
-    { label: `Reached ${conversionLabel}`, count: conversionVisitors, pct: Math.round((conversionVisitors / totalVisitors) * 100), color: 'var(--color-accent)' },
+    { label: 'Visited your site', count: total, pct: total ? 100 : 0, color: 'var(--color-primary)' },
+    { label: 'Opened the contact page', count: reached, pct: pct(reached), color: 'var(--color-secondary)' },
+    { label: 'Sent a form', count: c.formSubmissions, pct: pct(c.formSubmissions), color: 'var(--color-accent)' },
   ];
 });
 
 // ─── Top pages ──────────────────────────────────────────────────────────────
 
-const sortedPages = computed(() => {
-  if (!current.value) return [];
-  const pages = current.value.pages || [];
-  const external = pages
-    .filter(p => !internalRoutes.includes(p.value))
-    .sort((a, b) => (b.visitors || 0) - (a.visitors || 0));
-  const internal = pages
-    .filter(p => internalRoutes.includes(p.value))
-    .sort((a, b) => (b.visitors || 0) - (a.visitors || 0));
-  return [...external, ...internal];
-});
+const topPages = computed(() => report.value?.pages.slice(0, 10) ?? []);
+const maxPageVisitors = computed(() => Math.max(1, ...topPages.value.map((p) => p.visitors)));
 
-const maxPageVisitors = computed(() => {
-  const external = sortedPages.value.filter(p => !internalRoutes.includes(p.value));
-  return external.length > 0 ? Math.max(...external.map(p => p.visitors || 0)) : 1;
-});
-
-// ─── Insight card ───────────────────────────────────────────────────────────
+// ─── Insight ────────────────────────────────────────────────────────────────
 
 const insightText = computed(() => {
-  if (!current.value) return '';
-  const pages = current.value.pages || [];
-  const totalVisitors = current.value.visitors || 0;
-  const homepageVisitors = pages.find(p => p.value === '/')?.visitors ?? 0;
-  const conversionVisitors = pages.find(p => p.value === conversionPage)?.visitors ?? 0;
+  if (!report.value) return '';
+  const { visitors, formSubmissions, contactClicks } = report.value.current;
   const change = visitorChange.value;
 
-  const homepagePct = totalVisitors > 0 ? homepageVisitors / totalVisitors : 0;
-  const conversionPct = totalVisitors > 0 ? conversionVisitors / totalVisitors : 0;
-
-  if (homepagePct > 0.9 && conversionPct < 0.05) {
-    return `Over 9 in 10 visitors left from your homepage without going further. Adding a clear '${conversionLabel}' button to your homepage could help more people find their way.`;
+  if (!visitors) {
+    return 'No visits have been recorded for this period yet. If the site has only just launched, figures usually start to appear within a day.';
   }
-  if (change < -10) {
-    return "Traffic dipped this period — this often happens after a quiet spell in posting or outreach. Sharing a recent update or story on social media can bring people back.";
+  if (visitors >= 50 && !formSubmissions && !contactClicks) {
+    return `${visitors.toLocaleString()} people visited without getting in touch. It is worth checking that the phone number and the Contact Sales button are easy to find on the pages they land on.`;
   }
-  if (change > 50) {
-    return `Your traffic is growing — great time to make sure visitors know what to do when they arrive. Is your '${conversionLabel}' page easy to find?`;
+  if (change !== null && change < -10) {
+    return 'Traffic dipped this period. That often follows a quiet spell in outreach — sharing a recent job or update on social media tends to bring people back.';
   }
-  return "Consistent, genuine outreach tends to compound over time. Even one new post or updated page per month keeps your site active in search results.";
+  if (change !== null && change > 50) {
+    return 'Traffic is growing. A good moment to make sure new visitors can see how to reach you from the first page they open.';
+  }
+  return 'Steady traffic compounds over time. Keeping service and equipment pages current helps the site stay visible in search results.';
 });
 
-// ─── Referrers ──────────────────────────────────────────────────────────────
+// ─── Where visits came from ─────────────────────────────────────────────────
 
-interface ReferrerDisplay {
-  name: string;
-  desc: string;
-  visitors: number;
+const SEARCH_ENGINES = ['google', 'bing', 'duckduckgo', 'yahoo', 'ecosia', 'brave'];
+const titleCase = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+const sourceRows = computed(() => {
+  // Several GA4 rows can describe the same thing in plain terms (google/organic
+  // and google/cpc are both "Google"), so they are merged by display name.
+  const merged = new Map<string, { name: string; desc: string; visitors: number }>();
+
+  for (const row of report.value?.sources ?? []) {
+    const source = row.source.toLowerCase();
+    const medium = row.medium.toLowerCase();
+    let name: string;
+    let desc = '';
+
+    if (source === '(direct)' || !source || source === '(not set)') {
+      name = 'Direct';
+      desc = 'Typed the address, used a bookmark, or followed a link in an email';
+    } else if (medium === 'organic' && SEARCH_ENGINES.some((e) => source.includes(e))) {
+      name = `${titleCase(SEARCH_ENGINES.find((e) => source.includes(e))!)} Search`;
+      desc = 'Searched and found you';
+    } else if (source.includes('google') && ['cpc', 'ppc', 'paid'].includes(medium)) {
+      name = 'Google Ads';
+      desc = 'Clicked a paid advert';
+    } else if (source.includes('facebook') || source.includes('fb.')) {
+      name = 'Facebook';
+      desc = 'A post or profile link';
+    } else if (source.includes('linkedin') || source === 'lnkd.in') {
+      name = 'LinkedIn';
+      desc = 'A post or profile link';
+    } else {
+      name = row.source.replace(/^https?:\/\//, '').replace(/\/$/, '');
+      desc = medium === 'referral' ? 'A link on another website' : '';
+    }
+
+    const existing = merged.get(name);
+    if (existing) existing.visitors += row.visitors;
+    else merged.set(name, { name, desc, visitors: row.visitors });
+  }
+
+  return [...merged.values()].sort((a, b) => b.visitors - a.visitors);
+});
+
+// ─── Chart ──────────────────────────────────────────────────────────────────
+
+const chartLabel = computed(() => (report.value?.unit === 'hour' ? 'Visitors by hour' : 'Visitors by day'));
+
+function pointLabel(key: string, unit: 'hour' | 'day'): string {
+  if (unit === 'hour') {
+    const h = Number(key);
+    return `${h % 12 || 12}${h < 12 ? 'am' : 'pm'}`;
+  }
+  // Parsed as local noon so the label cannot slip a day across a timezone.
+  return new Date(`${key}T12:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
 
-const referrerRows = computed<ReferrerDisplay[]>(() => {
-  if (!current.value) return [];
-  return (current.value.referrers || []).map(r => {
-    const v = (r.value || '').toLowerCase();
-    if (!v || v === 'direct' || v === '(direct)') {
-      return { name: 'Direct / typed your URL', desc: 'Existing contacts, bookmarks, or word of mouth', visitors: r.visitors };
-    }
-    if (v.includes('google')) return { name: 'Google Search', desc: 'Someone searched and found you', visitors: r.visitors };
-    if (v.includes('facebook')) return { name: 'Facebook', desc: 'A post or profile link', visitors: r.visitors };
-    if (v.includes('instagram')) return { name: 'Instagram', desc: 'A post or bio link', visitors: r.visitors };
-    const cleaned = r.value.replace(/^https?:\/\//, '').replace(/\/$/, '');
-    return { name: cleaned, desc: '', visitors: r.visitors };
-  });
+/** The chart is a picture; this is the same information for a screen reader. */
+const chartSummary = computed(() => {
+  const series = report.value?.series ?? [];
+  if (!series.length || !report.value) return '';
+  const peak = series.reduce((a, b) => (b.visitors > a.visitors ? b : a));
+  if (!peak.visitors) return `${chartLabel.value}: no visitors recorded.`;
+  return `${chartLabel.value}. Busiest: ${pointLabel(peak.key, report.value.unit)} with ${plural(peak.visitors, 'visitor', 'visitors')}.`;
 });
 
-// ─── Bar chart ──────────────────────────────────────────────────────────────
-
 function renderChart() {
-  if (!chartCanvas.value || !current.value) return;
+  chartInstance?.destroy();
+  chartInstance = null;
+  if (!chartCanvas.value || !report.value) return;
 
-  if (chartInstance) {
-    chartInstance.destroy();
-    chartInstance = null;
-  }
-
-  const primaryColor = getComputedStyle(document.documentElement).getPropertyValue('--color-primary').trim() || '#0d9488';
-
-  // Build weekly buckets from the pages data — SA doesn't return daily breakdowns in our proxy,
-  // so we simulate weekly distribution. For a real implementation, add a daily visitors field to the proxy.
-  const days = period.value === 'today' ? 1 : period.value === '7d' ? 7 : 30;
-  const totalVisitors = current.value.visitors || 0;
-
-  let labels: string[];
-  let data: number[];
-
-  if (days <= 1) {
-    labels = ['Today'];
-    data = [totalVisitors];
-  } else if (days <= 7) {
-    const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    const today = new Date().getDay();
-    labels = [];
-    data = [];
-    for (let i = days - 1; i >= 0; i--) {
-      const dayIdx = (today - i + 7) % 7;
-      labels.push(weekdays[dayIdx === 0 ? 6 : dayIdx - 1] ?? 'Day');
-      // Distribute visitors with slight variation
-      const base = Math.floor(totalVisitors / days);
-      const variance = Math.floor(Math.random() * Math.max(1, base * 0.3));
-      data.push(base + (i % 2 === 0 ? variance : -variance));
-    }
-    // Adjust last bucket so total matches
-    const sum = data.reduce((a, b) => a + b, 0);
-    if (data.length > 0) data[data.length - 1]! += totalVisitors - sum;
-  } else {
-    // 4-week buckets
-    const weekCount = Math.ceil(days / 7);
-    labels = [];
-    data = [];
-    const basePerWeek = Math.floor(totalVisitors / weekCount);
-    for (let i = 0; i < weekCount; i++) {
-      labels.push(`Week ${i + 1}`);
-      const variance = Math.floor(Math.random() * Math.max(1, basePerWeek * 0.2));
-      data.push(basePerWeek + (i % 2 === 0 ? variance : -variance));
-    }
-    const sum = data.reduce((a, b) => a + b, 0);
-    if (data.length > 0) data[data.length - 1]! += totalVisitors - sum;
-  }
-
-  // Ensure no negative values
-  data = data.map(d => Math.max(0, d));
+  const css = getComputedStyle(document.documentElement);
+  const primary = css.getPropertyValue('--color-primary').trim() || '#710a0c';
+  const muted = css.getPropertyValue('--color-text-secondary').trim() || '#4b5563';
+  const { series, unit } = report.value;
 
   chartInstance = new Chart(chartCanvas.value, {
     type: 'bar',
     data: {
-      labels,
-      datasets: [{
-        data,
-        backgroundColor: primaryColor,
-        borderRadius: 4,
-        barPercentage: 0.6,
-      }],
+      labels: series.map((p) => pointLabel(p.key, unit)),
+      datasets: [{ data: series.map((p) => p.visitors), backgroundColor: primary, borderRadius: 3, barPercentage: 0.7 }],
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
       plugins: {
-        tooltip: { callbacks: { label: (ctx) => `${ctx.parsed.y} visitors` } },
+        tooltip: { callbacks: { label: (ctx) => plural(Number(ctx.parsed.y), 'visitor', 'visitors') } },
         legend: { display: false },
       },
       scales: {
-        x: {
-          grid: { display: false },
-          ticks: { font: { size: 11 } },
-        },
-        y: { display: false },
+        x: { grid: { display: false }, ticks: { font: { size: 11 }, color: muted, maxRotation: 0, autoSkipPadding: 12 } },
+        y: { beginAtZero: true, ticks: { precision: 0, maxTicksLimit: 4, font: { size: 11 }, color: muted }, border: { display: false } },
       },
     },
   });
 }
 
-watch(period, () => {
-  if (chartInstance) {
-    chartInstance.destroy();
-    chartInstance = null;
-  }
-});
-
 onMounted(fetchAnalytics);
+onBeforeUnmount(() => chartInstance?.destroy());
 </script>
 
 <template>
   <DashboardLayout page-title="Site Analytics">
-    <!-- GA4 fallback -->
-    <div v-if="isGA4" class="ana-ga4">
-      <Eye :size="48" style="opacity: 0.3" />
-      <h2 class="ana-ga4__title">Google Analytics</h2>
-      <p class="ana-ga4__desc">Your site uses Google Analytics. View your full traffic data in the GA4 dashboard.</p>
-      <a
-        href="https://analytics.google.com"
-        target="_blank"
-        rel="noopener"
-        class="ana-ga4__btn"
-      >
-        <ExternalLink :size="16" /> Open Google Analytics
-      </a>
+    <!-- Not connected yet: a setup step, not an error the reader caused. -->
+    <div v-if="state === 'setup'" class="ana-ga4">
+      <Settings :size="48" style="opacity: 0.3" aria-hidden="true" />
+      <h2 class="ana-ga4__title">Analytics is being connected</h2>
+      <p class="ana-ga4__desc">
+        {{ message || 'Your site is already collecting visitor data. It will appear here once the connection to Google Analytics is finished.' }}
+      </p>
     </div>
 
-    <!-- SA full layout -->
     <div v-else class="ana">
-      <!-- Period selector -->
-      <div class="ana__periods">
+      <div class="ana__periods" role="group" aria-label="Time period">
         <button
           v-for="(label, key) in PERIOD_LABELS"
           :key="key"
+          type="button"
           class="ana__period"
           :class="{ 'ana__period--active': period === key }"
-          @click="changePeriod(key as 'today' | '7d' | '30d')"
+          :aria-pressed="period === key"
+          @click="changePeriod(key)"
         >
           {{ label }}
         </button>
       </div>
 
-      <!-- Loading skeleton -->
-      <template v-if="loading">
+      <template v-if="state === 'loading'">
+        <p class="ana__sr-only" role="status">Loading analytics…</p>
         <div class="ana__skeleton ana__skeleton--story"></div>
         <div class="ana__skeleton ana__skeleton--chart"></div>
         <div class="ana__skeleton-grid">
@@ -404,113 +291,117 @@ onMounted(fetchAnalytics);
         </div>
       </template>
 
-      <!-- Error -->
-      <div v-else-if="error" class="ana__error">
-        <p class="ana__error-msg">Couldn't load analytics data</p>
-        <button class="ana__error-btn" @click="fetchAnalytics">
-          <RefreshCw :size="14" /> Try again
+      <div v-else-if="state === 'error'" class="ana__error" role="alert">
+        <p class="ana__error-msg">{{ message || "Couldn't load analytics data" }}</p>
+        <button type="button" class="ana__error-btn" @click="fetchAnalytics">
+          <RefreshCw :size="14" aria-hidden="true" /> Try again
         </button>
       </div>
 
-      <!-- Data -->
-      <template v-else-if="current">
-        <!-- Story card -->
+      <template v-else-if="report">
         <div class="ana__story">
           <p class="ana__story-headline">{{ storyHeadline }}</p>
           <p class="ana__story-sub">{{ storySubline }}</p>
         </div>
 
-        <!-- Weekly trend chart -->
         <div class="ana__chart-section">
-          <p class="ana__section-label">Weekly visitors</p>
+          <p class="ana__section-label">{{ chartLabel }}</p>
           <div class="ana__chart-wrap">
-            <canvas ref="chartCanvas"></canvas>
+            <canvas ref="chartCanvas" role="img" :aria-label="chartSummary"></canvas>
           </div>
         </div>
 
-        <!-- Metric cards -->
+        <p class="ana__section-label">Traffic</p>
         <div class="ana__metrics">
-          <div v-for="card in metricCards" :key="card.label" class="ana__metric">
+          <div v-for="card in trafficCards" :key="card.label" class="ana__metric">
             <div class="ana__metric-header">
-              <component :is="card.icon" :size="16" class="ana__metric-icon" />
+              <component :is="card.icon" :size="16" class="ana__metric-icon" aria-hidden="true" />
               <span class="ana__metric-label">{{ card.label }}</span>
             </div>
             <p class="ana__metric-value">{{ card.value }}</p>
             <div
               class="ana__metric-trend"
               :class="{
-                'ana__metric-trend--up': trendDirection(card.change) === 'up',
-                'ana__metric-trend--down': trendDirection(card.change) === 'down',
+                'ana__metric-trend--up': trendOf(card.change) === 'up',
+                'ana__metric-trend--down': trendOf(card.change) === 'down',
               }"
             >
-              <TrendingUp v-if="trendDirection(card.change) === 'up'" :size="14" />
-              <TrendingDown v-else-if="trendDirection(card.change) === 'down'" :size="14" />
-              <Minus v-else :size="14" />
-              <span>{{ trendLabel(trendDirection(card.change)) }}</span>
+              <TrendingUp v-if="trendOf(card.change) === 'up'" :size="14" aria-hidden="true" />
+              <TrendingDown v-else-if="trendOf(card.change) === 'down'" :size="14" aria-hidden="true" />
+              <Minus v-else :size="14" aria-hidden="true" />
+              <span>{{ trendLabel(card.change) }}</span>
             </div>
           </div>
         </div>
 
-        <!-- Visitor journey funnel -->
+        <p class="ana__section-label">People getting in touch</p>
+        <div class="ana__metrics">
+          <div v-for="card in enquiryCards" :key="card.label" class="ana__metric">
+            <div class="ana__metric-header">
+              <component :is="card.icon" :size="16" class="ana__metric-icon" aria-hidden="true" />
+              <span class="ana__metric-label">{{ card.label }}</span>
+            </div>
+            <p class="ana__metric-value">{{ card.value }}</p>
+            <div
+              class="ana__metric-trend"
+              :class="{
+                'ana__metric-trend--up': trendOf(card.change) === 'up',
+                'ana__metric-trend--down': trendOf(card.change) === 'down',
+              }"
+            >
+              <TrendingUp v-if="trendOf(card.change) === 'up'" :size="14" aria-hidden="true" />
+              <TrendingDown v-else-if="trendOf(card.change) === 'down'" :size="14" aria-hidden="true" />
+              <Minus v-else :size="14" aria-hidden="true" />
+              <span>{{ trendLabel(card.change) }}</span>
+            </div>
+          </div>
+        </div>
+
         <div class="ana__funnel">
           <p class="ana__section-label">Visitor journey</p>
           <div v-for="step in funnel" :key="step.label" class="ana__funnel-row">
             <span class="ana__funnel-label">{{ step.label }}</span>
-            <div class="ana__funnel-track">
+            <div class="ana__funnel-track" aria-hidden="true">
               <div
                 class="ana__funnel-fill"
-                :style="{ width: `clamp(36px, ${step.pct}%, 100%)`, backgroundColor: step.color }"
+                :style="{ width: step.count ? `clamp(6px, ${step.pct}%, 100%)` : '0', backgroundColor: step.color }"
               ></div>
             </div>
-            <span class="ana__funnel-pct">{{ step.pct }}%</span>
+            <span class="ana__funnel-pct">{{ step.count.toLocaleString() }}</span>
           </div>
         </div>
 
-        <!-- Top pages -->
         <div class="ana__pages">
           <div class="ana__pages-header">
-            <p class="ana__section-label">Top pages — real visitors only</p>
-            <button class="ana__toggle" @click="showInternal = !showInternal">
-              {{ showInternal ? 'Hide your activity' : 'Show your own activity' }}
-            </button>
+            <p class="ana__section-label">Most visited pages</p>
           </div>
+          <p v-if="!topPages.length" class="ana__referrers-empty">No page visits recorded for this period.</p>
           <div class="ana__pages-list">
-            <div
-              v-for="page in sortedPages"
-              :key="page.value"
-              class="ana__page-row"
-              :class="{ 'ana__page-row--internal': internalRoutes.includes(page.value) }"
-              :style="{ display: internalRoutes.includes(page.value) && !showInternal ? 'none' : undefined }"
-            >
-              <span class="ana__page-path">
-                {{ page.value }}
-                <span v-if="internalRoutes.includes(page.value)" class="ana__page-badge">(you)</span>
-              </span>
-              <div class="ana__page-bar-track">
+            <div v-for="page in topPages" :key="page.path" class="ana__page-row">
+              <span class="ana__page-path">{{ page.path }}</span>
+              <div class="ana__page-bar-track" aria-hidden="true">
                 <div
                   class="ana__page-bar-fill"
-                  :style="{ width: `${maxPageVisitors > 0 ? Math.max(2, ((page.visitors || 0) / maxPageVisitors) * 100) : 0}%` }"
+                  :style="{ width: `${Math.max(2, (page.visitors / maxPageVisitors) * 100)}%` }"
                 ></div>
               </div>
-              <span class="ana__page-count">{{ (page.visitors || 0).toLocaleString() }}</span>
+              <span class="ana__page-count">{{ page.visitors.toLocaleString() }}</span>
             </div>
           </div>
         </div>
 
-        <!-- Insight card -->
         <div class="ana__insight">
-          <div class="ana__insight-dot"></div>
+          <div class="ana__insight-dot" aria-hidden="true"></div>
           <div>
-            <p class="ana__insight-heading">What to focus on this month</p>
+            <p class="ana__insight-heading">Worth knowing</p>
             <p class="ana__insight-text">{{ insightText }}</p>
           </div>
         </div>
 
-        <!-- Referrers -->
         <div class="ana__referrers">
           <p class="ana__section-label">How people found you</p>
-          <div v-if="referrerRows.length === 0" class="ana__referrers-empty">No referrer data for this period.</div>
-          <div v-for="row in referrerRows" :key="row.name" class="ana__referrer-row">
+          <div v-if="sourceRows.length === 0" class="ana__referrers-empty">No visits recorded for this period.</div>
+          <div v-for="row in sourceRows" :key="row.name" class="ana__referrer-row">
             <div class="ana__referrer-info">
               <span class="ana__referrer-name">{{ row.name }}</span>
               <span v-if="row.desc" class="ana__referrer-desc">{{ row.desc }}</span>
@@ -537,7 +428,7 @@ onMounted(fetchAnalytics);
   border: none; border-radius: calc(var(--border-radius) - 2px); background: none;
   color: var(--color-text-secondary, var(--color-text)); cursor: pointer; transition: all 0.15s ease;
 }
-.ana__period--active { background-color: var(--color-primary); color: var(--color-text-inverse); }
+.ana__period--active { background-color: var(--color-primary); color: var(--color-on-primary); }
 
 /* ─── Loading skeletons ───────────────────────────────────────────────────── */
 .ana__skeleton { background-color: var(--color-surface); border-radius: var(--border-radius); animation: pulse 1.5s ease-in-out infinite; }
@@ -555,7 +446,7 @@ onMounted(fetchAnalytics);
 .ana__error-msg { font-size: 0.9375rem; color: var(--color-text); margin-bottom: 1rem; }
 .ana__error-btn {
   display: inline-flex; align-items: center; gap: 0.375rem;
-  padding: 0.5rem 1rem; background-color: var(--color-primary); color: var(--color-text-inverse);
+  padding: 0.5rem 1rem; background-color: var(--color-primary); color: var(--color-on-primary);
   border: none; border-radius: var(--border-radius); font-size: 0.8125rem; font-weight: 600; cursor: pointer;
 }
 
@@ -569,7 +460,7 @@ onMounted(fetchAnalytics);
 
 /* ─── Chart ───────────────────────────────────────────────────────────────── */
 .ana__chart-section { margin-bottom: 1.5rem; }
-.ana__chart-wrap { height: 90px; }
+.ana__chart-wrap { height: 160px; }
 
 /* ─── Metrics ─────────────────────────────────────────────────────────────── */
 .ana__metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.75rem; margin-bottom: 1.5rem; }
@@ -582,13 +473,13 @@ onMounted(fetchAnalytics);
 .ana__metric-label { font-size: 0.6875rem; font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-text-secondary, var(--color-text)); }
 .ana__metric-value { font-size: 1.5rem; font-weight: 700; color: var(--color-text); font-family: var(--font-heading); }
 .ana__metric-trend { display: flex; align-items: center; gap: 0.25rem; margin-top: 0.25rem; font-size: 0.75rem; color: var(--color-text-secondary, var(--color-text)); }
-.ana__metric-trend--up { color: #16a34a; }
-.ana__metric-trend--down { color: #dc2626; }
+.ana__metric-trend--up { color: var(--color-up); }
+.ana__metric-trend--down { color: var(--color-down); }
 
 /* ─── Funnel ──────────────────────────────────────────────────────────────── */
 .ana__funnel { margin-bottom: 1.5rem; }
 .ana__funnel-row { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.5rem; }
-.ana__funnel-label { font-size: 0.8125rem; color: var(--color-text); min-width: 140px; flex-shrink: 0; }
+.ana__funnel-label { font-size: 0.8125rem; color: var(--color-text); min-width: 172px; flex-shrink: 0; }
 .ana__funnel-track { flex: 1; height: 20px; background-color: var(--color-surface); border-radius: 4px; overflow: hidden; border: 1px solid var(--color-border); }
 .ana__funnel-fill { height: 100%; border-radius: 4px; transition: width 0.4s ease; }
 .ana__funnel-pct { font-size: 0.8125rem; font-weight: 600; color: var(--color-text); min-width: 36px; text-align: right; }
@@ -644,14 +535,19 @@ onMounted(fetchAnalytics);
 .ana-ga4__desc { max-width: 400px; line-height: 1.5; font-size: 0.9375rem; }
 .ana-ga4__btn {
   display: inline-flex; align-items: center; gap: 0.5rem;
-  padding: 0.625rem 1.25rem; background-color: var(--color-primary); color: var(--color-text-inverse);
+  padding: 0.625rem 1.25rem; background-color: var(--color-primary); color: var(--color-on-primary);
   border-radius: var(--border-radius); font-size: 0.875rem; font-weight: 600; text-decoration: none;
 }
 
 /* ─── Responsive ──────────────────────────────────────────────────────────── */
 @media (max-width: 640px) {
   .ana__metrics { grid-template-columns: 1fr; }
-  .ana__funnel-label { min-width: 100px; font-size: 0.75rem; }
+  .ana__funnel-label { min-width: 128px; font-size: 0.75rem; }
   .ana__page-path { min-width: 100px; }
+}
+
+.ana__sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }
 </style>

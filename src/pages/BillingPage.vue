@@ -542,7 +542,7 @@ onMounted(fetchBillingSummary);
 
 .billing-btn--primary {
   background-color: var(--color-primary);
-  color: var(--color-text-inverse);
+  color: var(--color-on-primary);
 }
 
 .billing-btn--secondary {

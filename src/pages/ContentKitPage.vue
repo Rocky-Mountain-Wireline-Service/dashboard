@@ -434,7 +434,7 @@ onMounted(loadContentKit);
   gap: 0.5rem;
   padding: 0.5rem 1.25rem;
   background-color: var(--color-primary);
-  color: var(--color-text-inverse);
+  color: var(--color-on-primary);
   font-size: 0.875rem;
   font-weight: 600;
   border: none;

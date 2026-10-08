@@ -1,115 +1,64 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { computed, onMounted } from 'vue';
 import { RouterLink } from 'vue-router';
 import { BarChart3, TrendingUp, TrendingDown, Minus, Loader2 } from 'lucide-vue-next';
-import config from '@/config/dashboard';
+import { useAnalytics, pctChange, trendOf } from '@/composables/useAnalytics';
 
-const analytics = config.analytics;
-const hasAnalytics = !!analytics?.provider;
-const isSA = analytics?.provider === 'simple-analytics';
+const { state, report, load } = useAnalytics();
 
-const loading = ref(false);
-const visitors = ref(0);
-const pageviews = ref(0);
-const avgTime = ref(0);
-const prevVisitors = ref(0);
+const trend = computed(() =>
+  report.value ? trendOf(pctChange(report.value.current.visitors, report.value.previous.visitors)) : 'flat'
+);
 
-function formatDuration(seconds: number): string {
-  if (seconds < 60) return `${Math.round(seconds)}s`;
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.round(seconds % 60);
-  return `${mins}m ${secs}s`;
-}
-
-function trendDir(): 'up' | 'down' | 'flat' {
-  if (!prevVisitors.value) return visitors.value > 0 ? 'up' : 'flat';
-  const change = ((visitors.value - prevVisitors.value) / prevVisitors.value) * 100;
-  if (change > 5) return 'up';
-  if (change < -5) return 'down';
-  return 'flat';
-}
-
-async function fetchStats() {
-  if (!isSA) return;
-  loading.value = true;
-  try {
-    const hostname = analytics?.simpleAnalyticsId || config.clientDomain;
-    const now = new Date();
-    const fmt = (d: Date) => d.toISOString().slice(0, 10);
-    const start = new Date(now); start.setDate(now.getDate() - 30);
-    const prevStart = new Date(start); prevStart.setDate(start.getDate() - 30);
-    const prevEnd = new Date(start); prevEnd.setDate(start.getDate() - 1);
-
-    const [curRes, prevRes] = await Promise.all([
-      fetch(`/.netlify/functions/analytics-proxy?hostname=${hostname}&start=${fmt(start)}&end=${fmt(now)}`),
-      fetch(`/.netlify/functions/analytics-proxy?hostname=${hostname}&start=${fmt(prevStart)}&end=${fmt(prevEnd)}`),
-    ]);
-
-    if (curRes.ok) {
-      const data = await curRes.json();
-      visitors.value = data.visitors ?? 0;
-      pageviews.value = data.pageviews ?? 0;
-      avgTime.value = data.seconds_on_page ?? 0;
-    }
-    if (prevRes.ok) {
-      const data = await prevRes.json();
-      prevVisitors.value = data.visitors ?? 0;
-    }
-  } catch {
-    // Silently fail — widget is non-critical
-  } finally {
-    loading.value = false;
-  }
-}
-
-onMounted(fetchStats);
+onMounted(() => load('30d'));
 </script>
 
 <template>
   <div class="widget">
-    <h2 class="widget__title"><BarChart3 :size="18" /> Site Analytics</h2>
+    <h2 class="widget__title"><BarChart3 :size="18" aria-hidden="true" /> Site Analytics</h2>
 
-    <div v-if="!hasAnalytics" class="widget__placeholder">
-      <p>Analytics integration will be connected during setup.</p>
-    </div>
-
-    <div v-else-if="loading" class="widget__loading">
-      <Loader2 :size="18" class="widget__spinner" />
+    <div v-if="state === 'loading'" class="widget__loading" role="status">
+      <Loader2 :size="18" class="widget__spinner" aria-hidden="true" />
       <span>Loading...</span>
     </div>
 
-    <div v-else-if="isSA" class="widget__content">
+    <div v-else-if="state === 'ready' && report" class="widget__content">
+      <p class="widget__provider">Last 30 days</p>
       <div class="widget__stats">
         <div class="widget__pill">
-          <span class="widget__pill-value">{{ visitors.toLocaleString() }}</span>
+          <span class="widget__pill-value">{{ report.current.visitors.toLocaleString() }}</span>
           <span class="widget__pill-label">visitors</span>
           <span
             class="widget__pill-trend"
             :class="{
-              'widget__pill-trend--up': trendDir() === 'up',
-              'widget__pill-trend--down': trendDir() === 'down',
+              'widget__pill-trend--up': trend === 'up',
+              'widget__pill-trend--down': trend === 'down',
             }"
           >
-            <TrendingUp v-if="trendDir() === 'up'" :size="12" />
-            <TrendingDown v-else-if="trendDir() === 'down'" :size="12" />
-            <Minus v-else :size="12" />
+            <TrendingUp v-if="trend === 'up'" :size="12" aria-label="up on the previous 30 days" />
+            <TrendingDown v-else-if="trend === 'down'" :size="12" aria-label="down on the previous 30 days" />
+            <Minus v-else :size="12" aria-hidden="true" />
           </span>
         </div>
         <div class="widget__pill">
-          <span class="widget__pill-value">{{ pageviews.toLocaleString() }}</span>
+          <span class="widget__pill-value">{{ report.current.pageviews.toLocaleString() }}</span>
           <span class="widget__pill-label">page views</span>
         </div>
         <div class="widget__pill">
-          <span class="widget__pill-value">{{ formatDuration(avgTime) }}</span>
-          <span class="widget__pill-label">avg. time</span>
+          <span class="widget__pill-value">{{ report.current.formSubmissions.toLocaleString() }}</span>
+          <span class="widget__pill-label">forms sent</span>
         </div>
       </div>
       <RouterLink to="/analytics" class="widget__link">View full analytics &rarr;</RouterLink>
     </div>
 
+    <div v-else-if="state === 'setup'" class="widget__placeholder">
+      <p>Analytics is being connected. Your site is already collecting visitor data.</p>
+    </div>
+
     <div v-else class="widget__content">
-      <p class="widget__provider">Google Analytics 4</p>
-      <RouterLink to="/analytics" class="widget__link">View analytics &rarr;</RouterLink>
+      <p class="widget__provider">Analytics could not be loaded just now.</p>
+      <RouterLink to="/analytics" class="widget__link">Open analytics &rarr;</RouterLink>
     </div>
   </div>
 </template>
@@ -169,8 +118,8 @@ onMounted(fetchStats);
   color: var(--color-text-secondary, var(--color-text));
 }
 
-.widget__pill-trend--up { color: #16a34a; }
-.widget__pill-trend--down { color: #dc2626; }
+.widget__pill-trend--up { color: var(--color-up); }
+.widget__pill-trend--down { color: var(--color-down); }
 
 .widget__provider {
   font-size: 0.875rem;
