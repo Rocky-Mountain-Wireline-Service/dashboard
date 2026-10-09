@@ -33,7 +33,13 @@ export interface AnalyticsReport {
   series: { key: string; visits: number }[];
   pages: { path: string; visits: number }[];
   sources: { source: string; medium: string; visits: number }[];
+  /** The same stretch one year earlier; null where that comparison does not apply. */
+  lastYear: { visits: number } | null;
   states: { name: string; visits: number }[];
+  cities: { name: string; region: string; visits: number }[];
+  /** Individual service pages, by name. */
+  services: { path: string; name: string; visits: number }[];
+  audience: { new: number; returning: number };
   devices: { mobile: number; desktop: number; tablet: number };
 }
 

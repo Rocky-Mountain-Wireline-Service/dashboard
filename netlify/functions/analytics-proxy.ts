@@ -62,7 +62,7 @@ const dim = (row: Row, i: number) => row.dimensionValues?.[i]?.value ?? '';
  * always last, valued `date_range_0` (current) or `date_range_1` (previous).
  * With one range it adds nothing, and every row is the current period.
  */
-const inRange = (rows: Row[] | undefined, index: 0 | 1, compared: boolean) =>
+const inRange = (rows: Row[] | undefined, index: number, compared: boolean) =>
   compared
     ? (rows ?? []).filter((r) => r.dimensionValues?.at(-1)?.value === `date_range_${index}`)
     : index === 0
@@ -92,6 +92,9 @@ export async function handler(event: {
   // "All time" has nothing before it.
   let current: { startDate: string; endDate: string };
   let previous: { startDate: string; endDate: string } | null;
+  // The same stretch a year earlier. Oilfield work is seasonal, so "against
+  // last month" can show a dip that is only the calendar; this does not.
+  let lastYear: { startDate: string; endDate: string } | null = null;
   if (spec.unit === 'month') {
     if (spec.months === null) {
       current = { startDate: GA4_EPOCH, endDate: 'today' };
@@ -105,9 +108,13 @@ export async function handler(event: {
     const ago = (n: number) => (n === 0 ? 'today' : `${n}daysAgo`);
     current = { startDate: ago(spec.days - 1), endDate: 'today' };
     previous = { startDate: ago(spec.days * 2 - 1), endDate: ago(spec.days) };
+    lastYear = { startDate: ago(spec.days - 1 + 365), endDate: ago(365) };
   }
   const compared = previous !== null;
   const ranges = previous ? [current, previous] : [current];
+  // Only the totals carry the year-ago range; GA4 allows four per report.
+  const totalRanges = lastYear ? [...ranges, lastYear] : ranges;
+  const lastYearIndex = lastYear ? totalRanges.length - 1 : -1;
 
   /*
     Everything is counted in ENGAGED sessions: visits that lasted ten seconds,
@@ -130,7 +137,7 @@ export async function handler(event: {
   const batchA = [
     // 0 — totals, this period against the one before it
     {
-      dateRanges: ranges,
+      dateRanges: totalRanges,
       metrics: [visits, { name: 'sessions' }, { name: 'userEngagementDuration' }],
     },
     // 1 — engaged visits over time
@@ -141,7 +148,7 @@ export async function handler(event: {
       limit: 250,
     },
     // 2 — pages people actually read
-    { dateRanges: [current], dimensions: [{ name: 'pagePath' }], metrics: [visits], orderBys: byVisits, limit: 40 },
+    { dateRanges: [current], dimensions: [{ name: 'pagePath' }], metrics: [visits], orderBys: byVisits, limit: 100 },
     // 3 — where engaged visits came from
     {
       dateRanges: [current],
@@ -171,7 +178,18 @@ export async function handler(event: {
     },
     // 1 — phone or desk
     { dateRanges: [current], dimensions: [{ name: 'deviceCategory' }], metrics: [visits] },
-    // 2 — has the site ever sent an enquiry event? Until the rebuilt site is
+    // 2 — towns and cities, which map onto branches better than states do
+    {
+      dateRanges: [current],
+      dimensions: [{ name: 'city' }, { name: 'region' }],
+      metrics: [visits],
+      dimensionFilter: { filter: { fieldName: 'country', stringFilter: { value: 'United States' } } },
+      orderBys: byVisits,
+      limit: 14,
+    },
+    // 3 — first visit, or someone coming back
+    { dateRanges: [current], dimensions: [{ name: 'newVsReturning' }], metrics: [visits] },
+    // 4 — has the site ever sent an enquiry event? Until the rebuilt site is
     //     live it has not, and a zero then means "not measured", not "none".
     {
       dateRanges: [{ startDate: '180daysAgo', endDate: 'today' }],
@@ -210,13 +228,15 @@ export async function handler(event: {
 
     const [a, b] = (await Promise.all(responses.map((r) => r.json()))) as { reports?: Report[] }[];
     const [totals, series, pages, sources, events] = a.reports ?? [];
-    const [states, devices, everTracked] = b.reports ?? [];
+    const [states, devices, cities, audience, everTracked] = b.reports ?? [];
 
     /** `/contact/` and `/contact` are one page; the old site used the first form, the rebuilt one the second. */
-    const cleanPath = (path: string) => path.split('?')[0].replace(/(.)\/+$/, '$1') || '/';
+    // Tracking parameters arrive both plain (?fbclid=…) and percent-encoded.
+    const cleanPath = (path: string) =>
+      path.split(/\?|%3F/i)[0].replace(/(.)\/+$/, '$1') || '/';
 
     const totalsFor = (index: 0 | 1) => {
-      const row = inRange(totals?.rows, index, compared)[0];
+      const row = inRange(totals?.rows, index, totalRanges.length > 1)[0];
       const eventRows = inRange(events?.rows, index, compared);
       const count = (name: string, onPage?: (path: string) => boolean) =>
         eventRows
@@ -272,6 +292,24 @@ export async function handler(event: {
       mergedPages.set(path, (mergedPages.get(path) ?? 0) + num(r, 0));
     }
 
+    // Service pages on their own, named as a person would say them.
+    const services = [...mergedPages]
+      .filter(([path, count]) => /^\/services\/[a-z0-9-]+$/.test(path) && count > 0)
+      .map(([path, count]) => ({
+        path,
+        name: path
+          .split('/')[2]
+          .split('-')
+          .map((w) => (w === 'and' ? w : w.charAt(0).toUpperCase() + w.slice(1)))
+          .join(' '),
+        visits: count,
+      }))
+      .sort((x, y) => y.visits - x.visits)
+      .slice(0, 8);
+
+    const audienceCount = (name: string) =>
+      num((audience?.rows ?? []).find((r) => dim(r, 0) === name), 0);
+
     const deviceCount = (name: string) =>
       num((devices?.rows ?? []).find((r) => dim(r, 0) === name), 0);
 
@@ -283,6 +321,10 @@ export async function handler(event: {
         unit: spec.unit,
         current: totalsFor(0),
         previous: compared ? totalsFor(1) : null,
+        lastYear:
+          lastYearIndex > 0
+            ? { visits: num(inRange(totals?.rows, lastYearIndex, true)[0], 0) }
+            : null,
         trackingActive: num(everTracked?.rows?.[0], 0) > 0,
         series: points,
         pages: [...mergedPages]
@@ -297,6 +339,12 @@ export async function handler(event: {
           .map((r) => ({ name: dim(r, 0), visits: num(r, 0) }))
           .filter((s) => s.visits > 0 && s.name && s.name !== '(not set)')
           .slice(0, 8),
+        cities: (cities?.rows ?? [])
+          .map((r) => ({ name: dim(r, 0), region: dim(r, 1), visits: num(r, 0) }))
+          .filter((c) => c.visits > 0 && c.name && c.name !== '(not set)')
+          .slice(0, 8),
+        services,
+        audience: { new: audienceCount('new'), returning: audienceCount('returning') },
         devices: {
           mobile: deviceCount('mobile'),
           desktop: deviceCount('desktop'),

@@ -2,7 +2,7 @@
 import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import DashboardLayout from '@/components/layout/DashboardLayout.vue';
 import {
-  Users, Clock, Smartphone, FileText, Phone, Briefcase,
+  Users, Clock, Smartphone, Repeat, FileText, Phone, Briefcase,
   TrendingUp, TrendingDown, Minus, RefreshCw, Settings,
 } from 'lucide-vue-next';
 import { Chart, BarController, BarElement, CategoryScale, LinearScale, Tooltip } from 'chart.js';
@@ -117,15 +117,35 @@ const mobileShare = computed(() => {
   return total ? Math.round((d.mobile / total) * 100) : null;
 });
 
+const returningShare = computed(() => {
+  const a = report.value?.audience;
+  if (!a) return null;
+  const total = a.new + a.returning;
+  return total ? Math.round((a.returning / total) * 100) : null;
+});
+
+/** Against the same stretch a year ago, in words — or '' where that does not apply. */
+const yearAgoNote = computed(() => {
+  const then = report.value?.lastYear?.visits;
+  if (!report.value || then === undefined) return '';
+  if (!then) return 'No visits recorded a year ago';
+  const change = pctChange(report.value.current.visits, then);
+  const dir = trendOf(change);
+  if (dir === 'flat') return 'About the same as a year ago';
+  return `${dir === 'up' ? 'Up' : 'Down'} ${Math.abs(change ?? 0)}% on a year ago`;
+});
+
 const trafficCards = computed(() => {
   if (!report.value) return [];
   const c = report.value.current;
   const visits = changeIn((t) => t.visits);
   const time = changeIn((t) => t.avgSeconds);
+  const share = (n: number | null) => (n === null ? '—' : `${n}%`);
   return [
-    { label: 'Real visits', value: c.visits.toLocaleString(), trend: trendLabel(visits), dir: trendOf(visits), icon: Users },
+    { label: 'Real visits', value: c.visits.toLocaleString(), trend: trendLabel(visits), dir: trendOf(visits), icon: Users, note: yearAgoNote.value },
     { label: 'Avg. time per visit', value: formatDuration(c.avgSeconds), trend: trendLabel(time), dir: trendOf(time), icon: Clock },
-    { label: 'On a phone', value: mobileShare.value === null ? '—' : `${mobileShare.value}%`, trend: 'of real visits', dir: 'flat' as const, icon: Smartphone, plain: true },
+    { label: 'On a phone', value: share(mobileShare.value), trend: 'of real visits', dir: 'flat' as const, icon: Smartphone, plain: true },
+    { label: 'Coming back', value: share(returningShare.value), trend: 'had visited before', dir: 'flat' as const, icon: Repeat, plain: true },
   ];
 });
 
@@ -149,6 +169,12 @@ const maxPageVisits = computed(() => Math.max(1, ...topPages.value.map((p) => p.
 
 const states = computed(() => report.value?.states ?? []);
 const maxStateVisits = computed(() => Math.max(1, ...states.value.map((s) => s.visits)));
+
+const cities = computed(() => report.value?.cities ?? []);
+const maxCityVisits = computed(() => Math.max(1, ...cities.value.map((c) => c.visits)));
+
+const services = computed(() => report.value?.services ?? []);
+const maxServiceVisits = computed(() => Math.max(1, ...services.value.map((v) => v.visits)));
 
 // ─── Insight ────────────────────────────────────────────────────────────────
 
@@ -367,8 +393,10 @@ onBeforeUnmount(() => chartInstance?.destroy());
           </div>
         </div>
 
+        <div class="ana__groups">
+        <div>
         <p class="ana__section-label">Traffic</p>
-        <div class="ana__metrics">
+        <div class="ana__metrics ana__metrics--four">
           <div v-for="card in trafficCards" :key="card.label" class="ana__metric">
             <div class="ana__metric-header">
               <component :is="card.icon" :size="16" class="ana__metric-icon" aria-hidden="true" />
@@ -386,9 +414,12 @@ onBeforeUnmount(() => chartInstance?.destroy());
               </template>
               <span>{{ card.trend }}</span>
             </div>
+            <p v-if="card.note" class="ana__metric-note">{{ card.note }}</p>
           </div>
         </div>
+        </div>
 
+        <div>
         <p class="ana__section-label">People getting in touch</p>
         <div v-if="report.trackingActive" class="ana__metrics">
           <div v-for="card in enquiryCards" :key="card.label" class="ana__metric">
@@ -416,7 +447,11 @@ onBeforeUnmount(() => chartInstance?.destroy());
             from the day the rebuilt site goes live. The current site does not record them.
           </p>
         </div>
+        </div>
+        </div>
 
+        <!-- Panels flow into as many columns as the window has room for. -->
+        <div class="ana__grid">
         <div class="ana__pages">
           <div class="ana__pages-header">
             <p class="ana__section-label">Most visited pages</p>
@@ -429,6 +464,22 @@ onBeforeUnmount(() => chartInstance?.destroy());
                 <div class="ana__page-bar-fill" :style="{ width: `${Math.max(2, (page.visits / maxPageVisits) * 100)}%` }"></div>
               </div>
               <span class="ana__page-count">{{ page.visits.toLocaleString() }}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="ana__pages">
+          <div class="ana__pages-header">
+            <p class="ana__section-label">Which services people look at</p>
+          </div>
+          <p v-if="!services.length" class="ana__referrers-empty">No service pages were visited in this period.</p>
+          <div class="ana__pages-list">
+            <div v-for="service in services" :key="service.path" class="ana__page-row">
+              <span class="ana__page-path ana__page-path--plain">{{ service.name }}</span>
+              <div class="ana__page-bar-track" aria-hidden="true">
+                <div class="ana__page-bar-fill" :style="{ width: `${Math.max(2, (service.visits / maxServiceVisits) * 100)}%` }"></div>
+              </div>
+              <span class="ana__page-count">{{ service.visits.toLocaleString() }}</span>
             </div>
           </div>
         </div>
@@ -449,7 +500,23 @@ onBeforeUnmount(() => chartInstance?.destroy());
           </div>
         </div>
 
-        <div class="ana__insight">
+        <div class="ana__pages">
+          <div class="ana__pages-header">
+            <p class="ana__section-label">Towns and cities</p>
+          </div>
+          <p v-if="!cities.length" class="ana__referrers-empty">No location data for this period.</p>
+          <div class="ana__pages-list">
+            <div v-for="city in cities" :key="`${city.name}-${city.region}`" class="ana__page-row">
+              <span class="ana__page-path ana__page-path--plain">{{ city.name }}<span class="ana__page-region">, {{ city.region }}</span></span>
+              <div class="ana__page-bar-track" aria-hidden="true">
+                <div class="ana__page-bar-fill" :style="{ width: `${Math.max(2, (city.visits / maxCityVisits) * 100)}%` }"></div>
+              </div>
+              <span class="ana__page-count">{{ city.visits.toLocaleString() }}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="ana__insight ana__grid-full">
           <div class="ana__insight-dot" aria-hidden="true"></div>
           <div>
             <p class="ana__insight-heading">Worth knowing</p>
@@ -469,7 +536,7 @@ onBeforeUnmount(() => chartInstance?.destroy());
           </div>
         </div>
 
-        <div class="ana__referrers">
+        <div class="ana__referrers ana__grid-wide">
           <p class="ana__section-label">What people searched on Google</p>
           <template v-if="searchConnected && search">
             <p class="ana__search-summary">
@@ -503,13 +570,16 @@ onBeforeUnmount(() => chartInstance?.destroy());
             <p>The words people type into Google to find you will appear here once Search Console is connected.</p>
           </div>
         </div>
+        </div>
       </template>
     </div>
   </DashboardLayout>
 </template>
 
 <style scoped>
-.ana { max-width: 720px; }
+/* Wide enough to fill a large monitor, capped so a line of text never runs the
+   full width of one. */
+.ana { max-width: 1500px; }
 
 /* ─── Period selector ─────────────────────────────────────────────────────── */
 .ana__periods {
@@ -635,7 +705,7 @@ onBeforeUnmount(() => chartInstance?.destroy());
 
 /* ─── Responsive ──────────────────────────────────────────────────────────── */
 @media (max-width: 640px) {
-  .ana__metrics { grid-template-columns: 1fr; }
+  .ana__metrics { grid-template-columns: 1fr 1fr; }
   .ana__funnel-label { min-width: 128px; font-size: 0.75rem; }
   .ana__page-path { min-width: 100px; }
 }
@@ -660,4 +730,32 @@ onBeforeUnmount(() => chartInstance?.destroy());
 .ana__search tbody th { font-weight: 500; color: var(--color-text); overflow-wrap: anywhere; }
 .ana__search .ana__search-num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; padding-left: 0.75rem; }
 .ana__periods { flex-wrap: wrap; }
+
+/* Text blocks keep a readable measure however wide the page gets. */
+.ana__story-headline, .ana__story-sub, .ana__insight-text, .ana__search-summary, .ana__pending p { max-width: 80ch; }
+
+.ana__chart-wrap { height: clamp(160px, 18vw, 260px); }
+
+.ana__metrics { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+/* Four cards go two-by-two or four across, never three and an orphan. */
+.ana__metrics--four { grid-template-columns: repeat(2, 1fr); }
+@media (min-width: 760px) {
+  .ana__metrics--four { grid-template-columns: repeat(4, 1fr); }
+}
+.ana__metric-note { margin-top: 0.25rem; font-size: 0.75rem; color: var(--color-text-secondary, var(--color-text)); }
+.ana__page-region { color: var(--color-text-secondary, var(--color-text)); }
+
+.ana__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+  gap: 0 2rem;
+  align-items: start;
+}
+.ana__grid-full { grid-column: 1 / -1; }
+
+@media (min-width: 1200px) {
+  /* Four traffic cards beside three enquiry cards, in proportion. */
+  .ana__groups { display: grid; grid-template-columns: 4fr 3fr; gap: 0 2rem; align-items: start; }
+  .ana__grid-wide { grid-column: span 2; }
+}
 </style>
