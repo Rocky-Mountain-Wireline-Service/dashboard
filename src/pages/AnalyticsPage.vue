@@ -2,11 +2,10 @@
 import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import DashboardLayout from '@/components/layout/DashboardLayout.vue';
 import {
-  Users, Eye, Clock, FileText, Phone, MousePointerClick,
+  Users, Clock, Smartphone, FileText, Phone, Briefcase,
   TrendingUp, TrendingDown, Minus, RefreshCw, Settings,
 } from 'lucide-vue-next';
 import { Chart, BarController, BarElement, CategoryScale, LinearScale, Tooltip } from 'chart.js';
-import config from '@/config/dashboard';
 import {
   useAnalytics, formatDuration, pctChange, trendOf,
   type Period,
@@ -14,27 +13,25 @@ import {
 
 Chart.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip);
 
-const conversionPage = config.analytics?.conversionPage ?? '/contact';
-
 const { state, report, message, load } = useAnalytics();
 const period = ref<Period>('30d');
 const chartCanvas = ref<HTMLCanvasElement | null>(null);
 let chartInstance: Chart | null = null;
 
 const PERIOD_LABELS: Record<Period, string> = {
-  today: 'Today',
   '7d': 'Last 7 days',
   '30d': 'Last 30 days',
+  '13w': 'Last 13 weeks',
 };
 const PERIOD_WORDS: Record<Period, string> = {
-  today: 'today',
   '7d': 'in the last 7 days',
   '30d': 'in the last 30 days',
+  '13w': 'in the last 13 weeks',
 };
 const PREV_PERIOD_WORDS: Record<Period, string> = {
-  today: 'yesterday',
   '7d': 'the 7 days before',
   '30d': 'the 30 days before',
+  '13w': 'the 13 weeks before',
 };
 
 async function fetchAnalytics() {
@@ -52,14 +49,14 @@ const plural = (n: number, one: string, many: string) => `${n.toLocaleString()} 
 
 // ─── Story ──────────────────────────────────────────────────────────────────
 
-const visitorChange = computed(() =>
-  report.value ? pctChange(report.value.current.visitors, report.value.previous.visitors) : null
+const visitChange = computed(() =>
+  report.value ? pctChange(report.value.current.visits, report.value.previous.visits) : null
 );
 
 const storyHeadline = computed(() => {
   if (!report.value) return '';
-  const v = report.value.current.visitors;
-  const change = visitorChange.value;
+  const v = report.value.current.visits;
+  const change = visitChange.value;
   const prev = PREV_PERIOD_WORDS[period.value];
 
   let trend = '';
@@ -69,19 +66,26 @@ const storyHeadline = computed(() => {
   else if (change >= -10) trend = ` — about the same as ${prev}`;
   else trend = ` — down from ${prev}`;
 
-  return `${plural(v, 'person', 'people')} visited your site ${PERIOD_WORDS[period.value]}${trend}.`;
+  return `Your site had ${plural(v, 'real visit', 'real visits')} ${PERIOD_WORDS[period.value]}${trend}.`;
 });
 
 const storySubline = computed(() => {
   if (!report.value) return '';
-  const { formSubmissions, contactClicks } = report.value.current;
-  if (!formSubmissions && !contactClicks) {
+  const c = report.value.current;
+  if (!report.value.trackingActive) return '';
+  const forms = c.contactForms + c.applications;
+  if (!forms && !c.contactClicks) {
     return 'No one sent a form or tapped a phone number or email address in that time.';
   }
-  return `They sent ${plural(formSubmissions, 'form', 'forms')} and tapped a phone number or email address ${plural(contactClicks, 'time', 'times')}.`;
+  return `${plural(c.contactForms, 'contact form', 'contact forms')} and ${plural(c.applications, 'job application', 'job applications')} were sent, and a phone number or email address was tapped ${plural(c.contactClicks, 'time', 'times')}.`;
 });
 
-// ─── Metric cards ───────────────────────────────────────────────────────────
+/** Sessions GA4 recorded that never became a visit — overwhelmingly automated. */
+const filteredOut = computed(() =>
+  report.value ? Math.max(0, report.value.current.allVisits - report.value.current.visits) : 0
+);
+
+// ─── Cards ──────────────────────────────────────────────────────────────────
 
 function trendLabel(change: number | null): string {
   if (change === null) return 'No earlier figure to compare';
@@ -90,65 +94,67 @@ function trendLabel(change: number | null): string {
   return `${dir === 'up' ? 'Up' : 'Down'} ${Math.abs(change)}%`;
 }
 
+const mobileShare = computed(() => {
+  const d = report.value?.devices;
+  if (!d) return null;
+  const total = d.mobile + d.desktop + d.tablet;
+  return total ? Math.round((d.mobile / total) * 100) : null;
+});
+
 const trafficCards = computed(() => {
   if (!report.value) return [];
   const { current: c, previous: p } = report.value;
   return [
-    { label: 'Visitors', value: c.visitors.toLocaleString(), change: pctChange(c.visitors, p.visitors), icon: Users },
-    { label: 'Page views', value: c.pageviews.toLocaleString(), change: pctChange(c.pageviews, p.pageviews), icon: Eye },
-    { label: 'Avg. visit length', value: formatDuration(c.avgSessionSeconds), change: pctChange(c.avgSessionSeconds, p.avgSessionSeconds), icon: Clock },
+    { label: 'Real visits', value: c.visits.toLocaleString(), trend: trendLabel(pctChange(c.visits, p.visits)), dir: trendOf(pctChange(c.visits, p.visits)), icon: Users },
+    { label: 'Avg. time per visit', value: formatDuration(c.avgSeconds), trend: trendLabel(pctChange(c.avgSeconds, p.avgSeconds)), dir: trendOf(pctChange(c.avgSeconds, p.avgSeconds)), icon: Clock },
+    { label: 'On a phone', value: mobileShare.value === null ? '—' : `${mobileShare.value}%`, trend: 'of real visits', dir: 'flat' as const, icon: Smartphone, plain: true },
   ];
 });
 
 const enquiryCards = computed(() => {
   if (!report.value) return [];
   const { current: c, previous: p } = report.value;
+  const card = (label: string, now: number, before: number, icon: unknown) => ({
+    label, value: now.toLocaleString(), trend: trendLabel(pctChange(now, before)), dir: trendOf(pctChange(now, before)), icon, plain: false,
+  });
   return [
-    { label: 'Forms sent', value: c.formSubmissions.toLocaleString(), change: pctChange(c.formSubmissions, p.formSubmissions), icon: FileText },
-    { label: 'Phone & email taps', value: c.contactClicks.toLocaleString(), change: pctChange(c.contactClicks, p.contactClicks), icon: Phone },
-    { label: 'Contact Sales clicks', value: c.ctaClicks.toLocaleString(), change: pctChange(c.ctaClicks, p.ctaClicks), icon: MousePointerClick },
+    card('Contact forms', c.contactForms, p.contactForms, FileText),
+    card('Job applications', c.applications, p.applications, Briefcase),
+    card('Phone & email taps', c.contactClicks, p.contactClicks, Phone),
   ];
 });
 
-// ─── Visitor journey ────────────────────────────────────────────────────────
+// ─── Bar lists ──────────────────────────────────────────────────────────────
 
-const funnel = computed(() => {
-  if (!report.value) return [];
-  const { current: c, pages } = report.value;
-  const total = c.visitors;
-  const reached = pages.find((p) => p.path.replace(/\/$/, '') === conversionPage)?.visitors ?? 0;
-  const pct = (n: number) => (total ? Math.min(100, Math.round((n / total) * 100)) : 0);
+const topPages = computed(() => report.value?.pages ?? []);
+const maxPageVisits = computed(() => Math.max(1, ...topPages.value.map((p) => p.visits)));
 
-  return [
-    { label: 'Visited your site', count: total, pct: total ? 100 : 0, color: 'var(--color-primary)' },
-    { label: 'Opened the contact page', count: reached, pct: pct(reached), color: 'var(--color-secondary)' },
-    { label: 'Sent a form', count: c.formSubmissions, pct: pct(c.formSubmissions), color: 'var(--color-accent)' },
-  ];
-});
-
-// ─── Top pages ──────────────────────────────────────────────────────────────
-
-const topPages = computed(() => report.value?.pages.slice(0, 10) ?? []);
-const maxPageVisitors = computed(() => Math.max(1, ...topPages.value.map((p) => p.visitors)));
+const states = computed(() => report.value?.states ?? []);
+const maxStateVisits = computed(() => Math.max(1, ...states.value.map((s) => s.visits)));
 
 // ─── Insight ────────────────────────────────────────────────────────────────
 
 const insightText = computed(() => {
   if (!report.value) return '';
-  const { visitors, formSubmissions, contactClicks } = report.value.current;
-  const change = visitorChange.value;
+  const { current: c, pages, trackingActive } = report.value;
+  const change = visitChange.value;
+  const jobs = pages.find((p) => p.path.startsWith('/employment'))?.visits ?? 0;
+  const contact = pages.find((p) => p.path.startsWith('/contact'))?.visits ?? 0;
 
-  if (!visitors) {
-    return 'No visits have been recorded for this period yet. If the site has only just launched, figures usually start to appear within a day.';
+  if (!c.visits) {
+    return 'No real visits have been recorded for this period yet. If the site has only just launched, figures usually start to appear within a day.';
   }
-  if (visitors >= 50 && !formSubmissions && !contactClicks) {
-    return `${visitors.toLocaleString()} people visited without getting in touch. It is worth checking that the phone number and the Contact Sales button are easy to find on the pages they land on.`;
+  if (trackingActive && c.visits >= 50 && !c.contactForms && !c.applications && !c.contactClicks) {
+    return `${c.visits.toLocaleString()} real visits and no one got in touch. It is worth checking that the phone number and the Contact Sales button are easy to find on the pages people land on.`;
+  }
+  if (jobs > contact && jobs >= 10) {
+    return `The Employment page drew more visits than the Contact page (${jobs.toLocaleString()} against ${contact.toLocaleString()}). A good share of your audience is job seekers, so keeping open positions and the application form current pays off.`;
   }
   if (change !== null && change < -10) {
-    return 'Traffic dipped this period. That often follows a quiet spell in outreach — sharing a recent job or update on social media tends to bring people back.';
+    return 'Visits dipped this period. That often follows a quiet spell in outreach — sharing a recent job or update on social media tends to bring people back.';
   }
   if (change !== null && change > 50) {
-    return 'Traffic is growing. A good moment to make sure new visitors can see how to reach you from the first page they open.';
+    return 'Visits are growing. A good moment to make sure new visitors can see how to reach you from the first page they open.';
   }
   return 'Steady traffic compounds over time. Keeping service and equipment pages current helps the site stay visible in search results.';
 });
@@ -156,12 +162,16 @@ const insightText = computed(() => {
 // ─── Where visits came from ─────────────────────────────────────────────────
 
 const SEARCH_ENGINES = ['google', 'bing', 'duckduckgo', 'yahoo', 'ecosia', 'brave'];
+const ENGINE_NAMES: Record<string, string> = { duckduckgo: 'DuckDuckGo' };
+/** Beyond this many rows the list is a tail of one-visit sources nobody acts on. */
+const MAX_SOURCES = 6;
+const AI_ASSISTANTS = ['chatgpt', 'openai', 'perplexity', 'claude', 'gemini', 'copilot'];
 const titleCase = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 const sourceRows = computed(() => {
-  // Several GA4 rows can describe the same thing in plain terms (google/organic
-  // and google/cpc are both "Google"), so they are merged by display name.
-  const merged = new Map<string, { name: string; desc: string; visitors: number }>();
+  // Several GA4 rows can describe the same thing in plain terms (facebook.com,
+  // m.facebook.com and l.facebook.com are all "Facebook"), so they are merged.
+  const merged = new Map<string, { name: string; desc: string; visits: number }>();
 
   for (const row of report.value?.sources ?? []) {
     const source = row.source.toLowerCase();
@@ -172,12 +182,16 @@ const sourceRows = computed(() => {
     if (source === '(direct)' || !source || source === '(not set)') {
       name = 'Direct';
       desc = 'Typed the address, used a bookmark, or followed a link in an email';
-    } else if (medium === 'organic' && SEARCH_ENGINES.some((e) => source.includes(e))) {
-      name = `${titleCase(SEARCH_ENGINES.find((e) => source.includes(e))!)} Search`;
-      desc = 'Searched and found you';
     } else if (source.includes('google') && ['cpc', 'ppc', 'paid'].includes(medium)) {
       name = 'Google Ads';
       desc = 'Clicked a paid advert';
+    } else if (medium === 'organic' && SEARCH_ENGINES.some((e) => source.includes(e))) {
+      const engine = SEARCH_ENGINES.find((e) => source.includes(e))!;
+      name = `${ENGINE_NAMES[engine] ?? titleCase(engine)} Search`;
+      desc = 'Searched and found you';
+    } else if (AI_ASSISTANTS.some((a) => source.includes(a))) {
+      name = 'AI assistants';
+      desc = 'Followed a link from ChatGPT or a similar tool';
     } else if (source.includes('facebook') || source.includes('fb.')) {
       name = 'Facebook';
       desc = 'A post or profile link';
@@ -190,33 +204,41 @@ const sourceRows = computed(() => {
     }
 
     const existing = merged.get(name);
-    if (existing) existing.visitors += row.visitors;
-    else merged.set(name, { name, desc, visitors: row.visitors });
+    if (existing) existing.visits += row.visits;
+    else merged.set(name, { name, desc, visits: row.visits });
   }
 
-  return [...merged.values()].sort((a, b) => b.visitors - a.visitors);
+  const rows = [...merged.values()].sort((a, b) => b.visits - a.visits);
+  if (rows.length <= MAX_SOURCES) return rows;
+
+  const rest = rows.slice(MAX_SOURCES - 1);
+  return [
+    ...rows.slice(0, MAX_SOURCES - 1),
+    {
+      name: 'Everything else',
+      desc: `${rest.length} smaller sources`,
+      visits: rest.reduce((sum, r) => sum + r.visits, 0),
+    },
+  ];
 });
 
 // ─── Chart ──────────────────────────────────────────────────────────────────
 
-const chartLabel = computed(() => (report.value?.unit === 'hour' ? 'Visitors by hour' : 'Visitors by day'));
+const chartLabel = computed(() => (report.value?.unit === 'week' ? 'Real visits by week' : 'Real visits by day'));
 
-function pointLabel(key: string, unit: 'hour' | 'day'): string {
-  if (unit === 'hour') {
-    const h = Number(key);
-    return `${h % 12 || 12}${h < 12 ? 'am' : 'pm'}`;
-  }
+function pointLabel(key: string, unit: 'day' | 'week'): string {
   // Parsed as local noon so the label cannot slip a day across a timezone.
-  return new Date(`${key}T12:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const label = new Date(`${key}T12:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return unit === 'week' ? `Wk of ${label}` : label;
 }
 
 /** The chart is a picture; this is the same information for a screen reader. */
 const chartSummary = computed(() => {
   const series = report.value?.series ?? [];
   if (!series.length || !report.value) return '';
-  const peak = series.reduce((a, b) => (b.visitors > a.visitors ? b : a));
-  if (!peak.visitors) return `${chartLabel.value}: no visitors recorded.`;
-  return `${chartLabel.value}. Busiest: ${pointLabel(peak.key, report.value.unit)} with ${plural(peak.visitors, 'visitor', 'visitors')}.`;
+  const peak = series.reduce((a, b) => (b.visits > a.visits ? b : a));
+  if (!peak.visits) return `${chartLabel.value}: none recorded.`;
+  return `${chartLabel.value}. Busiest: ${pointLabel(peak.key, report.value.unit)} with ${plural(peak.visits, 'visit', 'visits')}.`;
 });
 
 function renderChart() {
@@ -233,13 +255,13 @@ function renderChart() {
     type: 'bar',
     data: {
       labels: series.map((p) => pointLabel(p.key, unit)),
-      datasets: [{ data: series.map((p) => p.visitors), backgroundColor: primary, borderRadius: 3, barPercentage: 0.7 }],
+      datasets: [{ data: series.map((p) => p.visits), backgroundColor: primary, borderRadius: 3, barPercentage: 0.7 }],
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
       plugins: {
-        tooltip: { callbacks: { label: (ctx) => plural(Number(ctx.parsed.y), 'visitor', 'visitors') } },
+        tooltip: { callbacks: { label: (ctx) => plural(Number(ctx.parsed.y), 'visit', 'visits') } },
         legend: { display: false },
       },
       scales: {
@@ -301,7 +323,11 @@ onBeforeUnmount(() => chartInstance?.destroy());
       <template v-else-if="report">
         <div class="ana__story">
           <p class="ana__story-headline">{{ storyHeadline }}</p>
-          <p class="ana__story-sub">{{ storySubline }}</p>
+          <p v-if="storySubline" class="ana__story-sub">{{ storySubline }}</p>
+          <p v-if="filteredOut" class="ana__story-sub ana__story-note">
+            A real visit lasted at least ten seconds, opened a second page, or got in touch.
+            {{ filteredOut.toLocaleString() }} other {{ filteredOut === 1 ? 'hit was' : 'hits were' }} left out — almost all automated traffic.
+          </p>
         </div>
 
         <div class="ana__chart-section">
@@ -321,21 +347,20 @@ onBeforeUnmount(() => chartInstance?.destroy());
             <p class="ana__metric-value">{{ card.value }}</p>
             <div
               class="ana__metric-trend"
-              :class="{
-                'ana__metric-trend--up': trendOf(card.change) === 'up',
-                'ana__metric-trend--down': trendOf(card.change) === 'down',
-              }"
+              :class="{ 'ana__metric-trend--up': card.dir === 'up', 'ana__metric-trend--down': card.dir === 'down' }"
             >
-              <TrendingUp v-if="trendOf(card.change) === 'up'" :size="14" aria-hidden="true" />
-              <TrendingDown v-else-if="trendOf(card.change) === 'down'" :size="14" aria-hidden="true" />
-              <Minus v-else :size="14" aria-hidden="true" />
-              <span>{{ trendLabel(card.change) }}</span>
+              <template v-if="!card.plain">
+                <TrendingUp v-if="card.dir === 'up'" :size="14" aria-hidden="true" />
+                <TrendingDown v-else-if="card.dir === 'down'" :size="14" aria-hidden="true" />
+                <Minus v-else :size="14" aria-hidden="true" />
+              </template>
+              <span>{{ card.trend }}</span>
             </div>
           </div>
         </div>
 
         <p class="ana__section-label">People getting in touch</p>
-        <div class="ana__metrics">
+        <div v-if="report.trackingActive" class="ana__metrics">
           <div v-for="card in enquiryCards" :key="card.label" class="ana__metric">
             <div class="ana__metric-header">
               <component :is="card.icon" :size="16" class="ana__metric-icon" aria-hidden="true" />
@@ -344,31 +369,22 @@ onBeforeUnmount(() => chartInstance?.destroy());
             <p class="ana__metric-value">{{ card.value }}</p>
             <div
               class="ana__metric-trend"
-              :class="{
-                'ana__metric-trend--up': trendOf(card.change) === 'up',
-                'ana__metric-trend--down': trendOf(card.change) === 'down',
-              }"
+              :class="{ 'ana__metric-trend--up': card.dir === 'up', 'ana__metric-trend--down': card.dir === 'down' }"
             >
-              <TrendingUp v-if="trendOf(card.change) === 'up'" :size="14" aria-hidden="true" />
-              <TrendingDown v-else-if="trendOf(card.change) === 'down'" :size="14" aria-hidden="true" />
+              <TrendingUp v-if="card.dir === 'up'" :size="14" aria-hidden="true" />
+              <TrendingDown v-else-if="card.dir === 'down'" :size="14" aria-hidden="true" />
               <Minus v-else :size="14" aria-hidden="true" />
-              <span>{{ trendLabel(card.change) }}</span>
+              <span>{{ card.trend }}</span>
             </div>
           </div>
         </div>
-
-        <div class="ana__funnel">
-          <p class="ana__section-label">Visitor journey</p>
-          <div v-for="step in funnel" :key="step.label" class="ana__funnel-row">
-            <span class="ana__funnel-label">{{ step.label }}</span>
-            <div class="ana__funnel-track" aria-hidden="true">
-              <div
-                class="ana__funnel-fill"
-                :style="{ width: step.count ? `clamp(6px, ${step.pct}%, 100%)` : '0', backgroundColor: step.color }"
-              ></div>
-            </div>
-            <span class="ana__funnel-pct">{{ step.count.toLocaleString() }}</span>
-          </div>
+        <!-- Not measured is not the same as none; zeros here would mislead. -->
+        <div v-else class="ana__pending">
+          <p class="ana__pending-title">Not being counted yet</p>
+          <p>
+            Contact forms, job applications and taps on a phone number or email address will be counted
+            from the day the rebuilt site goes live. The current site does not record them.
+          </p>
         </div>
 
         <div class="ana__pages">
@@ -380,12 +396,25 @@ onBeforeUnmount(() => chartInstance?.destroy());
             <div v-for="page in topPages" :key="page.path" class="ana__page-row">
               <span class="ana__page-path">{{ page.path }}</span>
               <div class="ana__page-bar-track" aria-hidden="true">
-                <div
-                  class="ana__page-bar-fill"
-                  :style="{ width: `${Math.max(2, (page.visitors / maxPageVisitors) * 100)}%` }"
-                ></div>
+                <div class="ana__page-bar-fill" :style="{ width: `${Math.max(2, (page.visits / maxPageVisits) * 100)}%` }"></div>
               </div>
-              <span class="ana__page-count">{{ page.visitors.toLocaleString() }}</span>
+              <span class="ana__page-count">{{ page.visits.toLocaleString() }}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="ana__pages">
+          <div class="ana__pages-header">
+            <p class="ana__section-label">Where your visitors are</p>
+          </div>
+          <p v-if="!states.length" class="ana__referrers-empty">No location data for this period.</p>
+          <div class="ana__pages-list">
+            <div v-for="place in states" :key="place.name" class="ana__page-row">
+              <span class="ana__page-path ana__page-path--plain">{{ place.name }}</span>
+              <div class="ana__page-bar-track" aria-hidden="true">
+                <div class="ana__page-bar-fill" :style="{ width: `${Math.max(2, (place.visits / maxStateVisits) * 100)}%` }"></div>
+              </div>
+              <span class="ana__page-count">{{ place.visits.toLocaleString() }}</span>
             </div>
           </div>
         </div>
@@ -406,7 +435,7 @@ onBeforeUnmount(() => chartInstance?.destroy());
               <span class="ana__referrer-name">{{ row.name }}</span>
               <span v-if="row.desc" class="ana__referrer-desc">{{ row.desc }}</span>
             </div>
-            <span class="ana__referrer-count">{{ row.visitors.toLocaleString() }}</span>
+            <span class="ana__referrer-count">{{ row.visits.toLocaleString() }}</span>
           </div>
         </div>
       </template>
@@ -550,4 +579,13 @@ onBeforeUnmount(() => chartInstance?.destroy());
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }
+
+.ana__story-note { margin-top: 0.5rem; font-size: 0.8125rem; }
+.ana__pending {
+  background-color: var(--color-surface); border: 1px dashed var(--color-border);
+  border-radius: var(--border-radius); padding: 1rem 1.25rem; margin-bottom: 1.5rem;
+  font-size: 0.875rem; line-height: 1.5; color: var(--color-text-secondary, var(--color-text));
+}
+.ana__pending-title { font-weight: 600; color: var(--color-text); margin-bottom: 0.25rem; }
+.ana__page-path--plain { font-family: var(--font-body); }
 </style>

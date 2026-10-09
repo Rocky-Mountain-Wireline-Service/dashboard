@@ -7,7 +7,7 @@ import { useAnalytics, pctChange, trendOf } from '@/composables/useAnalytics';
 const { state, report, load } = useAnalytics();
 
 const trend = computed(() =>
-  report.value ? trendOf(pctChange(report.value.current.visitors, report.value.previous.visitors)) : 'flat'
+  report.value ? trendOf(pctChange(report.value.current.visits, report.value.previous.visits)) : 'flat'
 );
 
 onMounted(() => load('30d'));
@@ -26,8 +26,8 @@ onMounted(() => load('30d'));
       <p class="widget__provider">Last 30 days</p>
       <div class="widget__stats">
         <div class="widget__pill">
-          <span class="widget__pill-value">{{ report.current.visitors.toLocaleString() }}</span>
-          <span class="widget__pill-label">visitors</span>
+          <span class="widget__pill-value">{{ report.current.visits.toLocaleString() }}</span>
+          <span class="widget__pill-label">real visits</span>
           <span
             class="widget__pill-trend"
             :class="{
@@ -40,14 +40,16 @@ onMounted(() => load('30d'));
             <Minus v-else :size="12" aria-hidden="true" />
           </span>
         </div>
-        <div class="widget__pill">
-          <span class="widget__pill-value">{{ report.current.pageviews.toLocaleString() }}</span>
-          <span class="widget__pill-label">page views</span>
-        </div>
-        <div class="widget__pill">
-          <span class="widget__pill-value">{{ report.current.formSubmissions.toLocaleString() }}</span>
-          <span class="widget__pill-label">forms sent</span>
-        </div>
+        <template v-if="report.trackingActive">
+          <div class="widget__pill">
+            <span class="widget__pill-value">{{ report.current.contactForms.toLocaleString() }}</span>
+            <span class="widget__pill-label">contact forms</span>
+          </div>
+          <div class="widget__pill">
+            <span class="widget__pill-value">{{ report.current.applications.toLocaleString() }}</span>
+            <span class="widget__pill-label">job applications</span>
+          </div>
+        </template>
       </div>
       <RouterLink to="/analytics" class="widget__link">View full analytics &rarr;</RouterLink>
     </div>

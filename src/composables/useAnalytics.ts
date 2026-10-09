@@ -1,15 +1,20 @@
 import { ref } from 'vue';
 import { useApi } from '@/composables/useApi';
 
-export type Period = 'today' | '7d' | '30d';
+export type Period = '7d' | '30d' | '13w';
 
+/**
+ * A "visit" throughout is an engaged one: it lasted ten seconds, opened a
+ * second page, or got in touch. See the note in the analytics function for why
+ * raw visitor counts are not shown.
+ */
 export interface Totals {
-  visitors: number;
-  pageviews: number;
-  sessions: number;
-  avgSessionSeconds: number;
-  /** Contact and application forms sent. */
-  formSubmissions: number;
+  visits: number;
+  /** Every session GA4 recorded, automated ones included. */
+  allVisits: number;
+  avgSeconds: number;
+  contactForms: number;
+  applications: number;
   /** Taps on a phone number or email address. */
   contactClicks: number;
   /** Clicks on a "Contact Sales" button. */
@@ -19,12 +24,16 @@ export interface Totals {
 export interface AnalyticsReport {
   configured: true;
   period: Period;
-  unit: 'hour' | 'day';
+  unit: 'day' | 'week';
   current: Totals;
   previous: Totals;
-  series: { key: string; visitors: number }[];
-  pages: { path: string; visitors: number; pageviews: number }[];
-  sources: { source: string; medium: string; visitors: number }[];
+  /** False until the site has sent its first enquiry event. */
+  trackingActive: boolean;
+  series: { key: string; visits: number }[];
+  pages: { path: string; visits: number }[];
+  sources: { source: string; medium: string; visits: number }[];
+  states: { name: string; visits: number }[];
+  devices: { mobile: number; desktop: number; tablet: number };
 }
 
 /**

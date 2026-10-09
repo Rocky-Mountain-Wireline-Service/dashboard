@@ -37,7 +37,11 @@ A section that is not set up is left out of the menu and has no route.
 
 Until these are set the Analytics page says it is being connected rather than showing an error.
 
-The "People getting in touch" figures come from three events the public site sends: `generate_lead` (a form sent), `contact_click` (a phone number or email address tapped) and `quote_cta_click` (a Contact Sales button).
+### What the figures mean
+
+Everything is counted in **engaged visits**: sessions that lasted ten seconds, opened a second page, or got in touch. Raw visitor counts are not shown, because well over half of this site's sessions are automated (a steady stream from Singapore and from cloud data centres that loads one page and leaves). The page states how many hits were left out.
+
+The "People getting in touch" figures come from events the rebuilt public site sends: `generate_lead` (a form sent; counted as a job application when sent from `/employment`, otherwise as a contact form) and `contact_click` (a phone number or email address tapped). Until the first of these arrives, the section says it is not being counted yet rather than showing zeros.
 
 ## Who can get in
 
