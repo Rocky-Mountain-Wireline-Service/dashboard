@@ -8,13 +8,13 @@ import Stripe from 'stripe';
  * nobody else's, whatever ID a request names.
  *
  * Env:
- *   STRIPE_SECRET_KEY    a restricted key is enough — read access to customers,
+ *   STRIPE_CONFIG        {"secretKey":"…", …} — only secretKey is read here. A
+ *                        restricted key is enough: read access to customers,
  *                        subscriptions, invoices and products, write access to
  *                        customer portal sessions
  *   STRIPE_CUSTOMER_ID   cus_…
  *
- * STRIPE_CONFIG ({"secretKey":"…"}) is still read, for projects set up before
- * the key had its own variable.
+ * STRIPE_SECRET_KEY is accepted in place of STRIPE_CONFIG.
  */
 export function billingContext(): { stripe: Stripe; customerId: string } | null {
   let secretKey = process.env.STRIPE_SECRET_KEY;

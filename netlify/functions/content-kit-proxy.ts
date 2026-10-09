@@ -120,13 +120,21 @@ export async function handler(event: {
     return { statusCode: 403, headers: corsHeaders, body: JSON.stringify({ error: 'Forbidden' }) };
   }
 
-  const dbUrl = process.env.TURSO_DATABASE_URL;
-  const dbToken = process.env.TURSO_AUTH_TOKEN;
+  // TURSO_CONFIG is {"databaseUrl":"…","authToken":"…"}; the two separate
+  // variables are still read for projects set up before it existed.
+  let turso: { databaseUrl?: string; authToken?: string } = {};
+  try {
+    turso = JSON.parse(process.env.TURSO_CONFIG || '{}');
+  } catch {
+    // Malformed JSON is the same as not configured.
+  }
+  const dbUrl = turso.databaseUrl || process.env.TURSO_DATABASE_URL;
+  const dbToken = turso.authToken || process.env.TURSO_AUTH_TOKEN;
   if (!dbUrl || !dbToken) {
     return {
       statusCode: 500,
       headers: corsHeaders,
-      body: JSON.stringify({ error: 'Database not configured. Set TURSO_DATABASE_URL and TURSO_AUTH_TOKEN.' }),
+      body: JSON.stringify({ error: 'Database not configured. Set TURSO_CONFIG.' }),
     };
   }
 
