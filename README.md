@@ -20,7 +20,7 @@ pnpm dev           # the app and its server functions, at http://localhost:5173
 | Overview | Nothing. Links come from `src/config/dashboard.ts`. |
 | Analytics | A Google service account with Viewer access to the GA4 property. |
 | Contact & Support | A Resend API key and a verified sending domain. |
-| Billing | Hidden until `billing.stripeCustomerId` is added to the config. |
+| Billing | A Stripe key and the customer ID, with the customer portal switched on in Stripe. |
 | Content Kit | Hidden while `contentKit.enabled` is `false` in the config. |
 
 A section that is not set up is left out of the menu and has no route.

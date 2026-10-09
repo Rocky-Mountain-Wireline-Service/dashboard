@@ -29,8 +29,12 @@ export interface ContentEditor {
   description?: string;
 }
 
+/**
+ * The Stripe customer itself is not here: it lives in the server's environment
+ * (STRIPE_CUSTOMER_ID), where a request cannot change it.
+ */
 export interface BillingConfig {
-  stripeCustomerId: string;
+  enabled: boolean;
   showPendingCharges: boolean;
   showOfflineInvoices: boolean;
 }

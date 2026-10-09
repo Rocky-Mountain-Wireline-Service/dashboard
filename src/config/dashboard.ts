@@ -24,6 +24,11 @@ const config: DashboardConfig = {
     }
   ],
   "contentEditors": [],
+  "billing": {
+    "enabled": true,
+    "showPendingCharges": true,
+    "showOfflineInvoices": false
+  },
   "analytics": {
     "provider": "ga4",
     "analyticsId": "G-KQZRGVYZ06"
@@ -90,7 +95,7 @@ const config: DashboardConfig = {
 /** Which optional sections exist for this client. Drives the menu and the routes. */
 export const features = {
   contentKit: Boolean(config.contentKit?.enabled),
-  billing: Boolean(config.billing?.stripeCustomerId),
+  billing: Boolean(config.billing?.enabled),
 };
 
 export default config;

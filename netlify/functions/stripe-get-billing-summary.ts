@@ -1,5 +1,6 @@
-import Stripe from 'stripe';
-import { requireUser } from '../lib/auth';
+import type Stripe from 'stripe';
+import { json, requireUser } from '../lib/auth';
+import { billingContext } from '../lib/stripe';
 
 interface BillingSummary {
   subscription: {
@@ -34,139 +35,136 @@ interface BillingSummary {
     invoicePdf: string | null;
   }>;
   paymentMethod: {
+    /** "card" or "bank" */
+    type: 'card' | 'bank';
     brand: string;
     last4: string;
-    expMonth: number;
-    expYear: number;
+    expMonth: number | null;
+    expYear: number | null;
   } | null;
 }
 
-export async function handler(event: { queryStringParameters: Record<string, string> | null; headers: Record<string, string> }) {
+/** A subscription that is still running outranks one that has ended. */
+const LIVE = ['active', 'trialing', 'past_due', 'unpaid', 'incomplete', 'paused'];
+
+function describePaymentMethod(pm: unknown): BillingSummary['paymentMethod'] {
+  if (!pm || typeof pm !== 'object') return null;
+  const method = pm as Stripe.PaymentMethod;
+  if (method.card) {
+    return {
+      type: 'card',
+      brand: method.card.brand || 'card',
+      last4: method.card.last4 || '',
+      expMonth: method.card.exp_month ?? null,
+      expYear: method.card.exp_year ?? null,
+    };
+  }
+  if (method.us_bank_account) {
+    return {
+      type: 'bank',
+      brand: method.us_bank_account.bank_name || 'Bank account',
+      last4: method.us_bank_account.last4 || '',
+      expMonth: null,
+      expYear: null,
+    };
+  }
+  return null;
+}
+
+export async function handler(event: { headers: Record<string, string> }) {
   const auth = await requireUser(event.headers);
   if ('response' in auth) return auth.response;
 
-  // Fixed on the server, never read from the request — see the portal function.
-  const customerId = process.env.STRIPE_CUSTOMER_ID;
-  if (!customerId) {
-    return { statusCode: 500, body: JSON.stringify({ error: 'Billing is not configured' }) };
-  }
-
-  const stripeConfig = process.env.STRIPE_CONFIG;
-  if (!stripeConfig) {
-    return { statusCode: 500, body: JSON.stringify({ error: 'Stripe not configured' }) };
-  }
+  const ctx = billingContext();
+  if (!ctx) return json(200, { configured: false });
+  const { stripe, customerId } = ctx;
 
   try {
-    const { secretKey } = JSON.parse(stripeConfig);
-    const stripe = new Stripe(secretKey);
-
-    // Fetch customer with default payment method expanded
-    const customer = await stripe.customers.retrieve(customerId, {
-      expand: ['invoice_settings.default_payment_method'],
-    });
+    const [customer, subscriptions, openInvoices, paidInvoices] = await Promise.all([
+      stripe.customers.retrieve(customerId, { expand: ['invoice_settings.default_payment_method'] }),
+      stripe.subscriptions.list({
+        customer: customerId,
+        status: 'all',
+        limit: 10,
+        expand: ['data.default_payment_method'],
+      }),
+      stripe.invoices.list({ customer: customerId, status: 'open', limit: 10 }),
+      stripe.invoices.list({ customer: customerId, status: 'paid', limit: 10 }),
+    ]);
 
     if (customer.deleted) {
-      return { statusCode: 404, body: JSON.stringify({ error: 'Customer not found' }) };
+      console.error(`Stripe customer ${customerId} has been deleted.`);
+      return json(200, { configured: false });
     }
 
-    // Fetch active subscriptions (expand limited to 3 levels)
-    const subscriptions = await stripe.subscriptions.list({
-      customer: customerId,
-      status: 'all',
-      limit: 1,
-      expand: ['data.default_payment_method'],
-    });
+    // The newest subscription is not necessarily the current one: a cancelled
+    // plan that was later replaced would otherwise hide the plan now running.
+    const sub =
+      subscriptions.data.find((s) => LIVE.includes(s.status)) ?? subscriptions.data[0] ?? null;
 
     let subscription: BillingSummary['subscription'] = null;
-    if (subscriptions.data.length > 0) {
-      const sub = subscriptions.data[0];
+    if (sub) {
       const item = sub.items.data[0];
-      // Fetch product name separately to avoid deep expand
-      let productName = 'Subscription';
-      if (item?.price?.product) {
-        const productId = typeof item.price.product === 'string' ? item.price.product : item.price.product.id;
+      let planName = 'Subscription';
+      const product = item?.price?.product;
+      if (product) {
         try {
-          const product = await stripe.products.retrieve(productId);
-          productName = product.name;
-        } catch { /* fallback to default */ }
+          planName = (await stripe.products.retrieve(typeof product === 'string' ? product : product.id)).name;
+        } catch {
+          // The plan still shows, under a generic name.
+        }
       }
 
       subscription = {
         id: sub.id,
         status: sub.status,
-        planName: productName,
-        amount: item?.price?.unit_amount || 0,
+        planName,
+        amount: (item?.price?.unit_amount ?? 0) * (item?.quantity ?? 1),
         currency: item?.price?.currency || 'usd',
         interval: item?.price?.recurring?.interval || 'month',
-        nextBillingDate: (sub as any).current_period_end ?? null,
+        // Stripe moved the period from the subscription to its items; older
+        // API versions still send it on the subscription itself.
+        nextBillingDate:
+          item?.current_period_end ??
+          (sub as unknown as { current_period_end?: number }).current_period_end ??
+          null,
         cancelAtPeriodEnd: sub.cancel_at_period_end,
-      };
-    }
-
-    // Fetch open invoices (pending charges)
-    const openInvoices = await stripe.invoices.list({
-      customer: customerId,
-      status: 'open',
-      limit: 10,
-    });
-
-    const pendingCharges: BillingSummary['pendingCharges'] = openInvoices.data.map((inv) => ({
-      id: inv.id,
-      number: inv.number,
-      amount: inv.amount_due,
-      currency: inv.currency,
-      description: inv.description,
-      created: inv.created,
-      dueDate: inv.due_date,
-      hostedInvoiceUrl: inv.hosted_invoice_url ?? null,
-    }));
-
-    // Fetch recent paid invoices
-    const paidInvoices = await stripe.invoices.list({
-      customer: customerId,
-      status: 'paid',
-      limit: 10,
-    });
-
-    const recentPayments: BillingSummary['recentPayments'] = paidInvoices.data.map((inv) => ({
-      id: inv.id,
-      number: inv.number,
-      amount: inv.amount_paid,
-      currency: inv.currency,
-      description: inv.description,
-      created: inv.created,
-      paidAt: inv.status_transitions?.paid_at ?? null,
-      hostedInvoiceUrl: inv.hosted_invoice_url ?? null,
-      invoicePdf: inv.invoice_pdf ?? null,
-    }));
-
-    // Default payment method
-    let paymentMethod: BillingSummary['paymentMethod'] = null;
-    const defaultPM = customer.invoice_settings?.default_payment_method;
-    if (defaultPM && typeof defaultPM === 'object' && 'card' in defaultPM && defaultPM.card) {
-      paymentMethod = {
-        brand: defaultPM.card.brand || 'unknown',
-        last4: defaultPM.card.last4 || '****',
-        expMonth: defaultPM.card.exp_month || 0,
-        expYear: defaultPM.card.exp_year || 0,
       };
     }
 
     const summary: BillingSummary = {
       subscription,
-      pendingCharges,
-      recentPayments,
-      paymentMethod,
+      pendingCharges: openInvoices.data.map((inv) => ({
+        id: inv.id ?? '',
+        number: inv.number,
+        amount: inv.amount_remaining ?? inv.amount_due,
+        currency: inv.currency,
+        description: inv.description,
+        created: inv.created,
+        dueDate: inv.due_date,
+        hostedInvoiceUrl: inv.hosted_invoice_url ?? null,
+      })),
+      recentPayments: paidInvoices.data.map((inv) => ({
+        id: inv.id ?? '',
+        number: inv.number,
+        amount: inv.amount_paid,
+        currency: inv.currency,
+        description: inv.description,
+        created: inv.created,
+        paidAt: inv.status_transitions?.paid_at ?? null,
+        hostedInvoiceUrl: inv.hosted_invoice_url ?? null,
+        invoicePdf: inv.invoice_pdf ?? null,
+      })),
+      // The customer's default, or failing that the one the subscription charges.
+      paymentMethod:
+        describePaymentMethod(customer.invoice_settings?.default_payment_method) ??
+        describePaymentMethod(sub?.default_payment_method),
     };
 
-    return {
-      statusCode: 200,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ success: true, ...summary }),
-    };
+    return json(200, { configured: true, success: true, ...summary });
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    console.error('Billing summary error:', message);
-    return { statusCode: 500, body: JSON.stringify({ error: message }) };
+    // Stripe's messages name keys and object IDs; they stay in the log.
+    console.error('Billing summary error:', err instanceof Error ? err.message : err);
+    return json(502, { configured: true, error: 'Billing information could not be loaded. Please try again shortly.' });
   }
 }

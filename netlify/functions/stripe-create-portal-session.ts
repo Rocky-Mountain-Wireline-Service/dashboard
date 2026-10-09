@@ -1,49 +1,39 @@
-import Stripe from 'stripe';
-import { requireUser } from '../lib/auth';
+import { json, requireUser } from '../lib/auth';
+import { billingContext } from '../lib/stripe';
 
-interface RequestBody {
-  customerId?: string;
-  returnUrl: string;
-}
+/**
+ * Opens Stripe's hosted customer portal, where the card, the plan and past
+ * invoices are managed. The portal has to be switched on once in the Stripe
+ * dashboard (Settings → Billing → Customer portal) before this will work.
+ */
+export async function handler(event: {
+  httpMethod: string;
+  body: string | null;
+  headers: Record<string, string>;
+}) {
+  if (event.httpMethod !== 'POST') return json(405, { error: 'Method not allowed' });
 
-export async function handler(event: { body: string | null; headers: Record<string, string> }) {
   const auth = await requireUser(event.headers);
   if ('response' in auth) return auth.response;
 
-  if (event.body === null) {
-    return { statusCode: 400, body: JSON.stringify({ error: 'Missing request body' }) };
-  }
+  const ctx = billingContext();
+  if (!ctx) return json(503, { error: 'Billing is not set up yet.' });
 
-  const stripeConfig = process.env.STRIPE_CONFIG;
-  if (!stripeConfig) {
-    return { statusCode: 500, body: JSON.stringify({ error: 'Stripe not configured' }) };
-  }
+  // Only ever back to this dashboard. A return address taken from the request
+  // would let a crafted link bounce someone from Stripe to any site.
+  const requested = event.headers.origin || '';
+  const isLocal = /^http:\/\/localhost(:\d+)?$/.test(requested);
+  const origin = isLocal || requested === process.env.URL ? requested : process.env.URL || '';
+  if (!origin) return json(400, { error: 'Missing origin.' });
 
   try {
-    const { secretKey } = JSON.parse(stripeConfig);
-    const stripe = new Stripe(secretKey);
-    const { returnUrl } = JSON.parse(event.body) as RequestBody;
-
-    // The customer is fixed on the server. Taking it from the request would let
-    // any signed-in user open the billing portal of any customer ID they typed.
-    const customerId = process.env.STRIPE_CUSTOMER_ID;
-    if (!customerId) {
-      return { statusCode: 500, body: JSON.stringify({ error: 'Billing is not configured' }) };
-    }
-
-    const session = await stripe.billingPortal.sessions.create({
-      customer: customerId,
-      return_url: returnUrl || process.env.URL || 'https://localhost:8888/billing',
+    const session = await ctx.stripe.billingPortal.sessions.create({
+      customer: ctx.customerId,
+      return_url: `${origin.replace(/\/$/, '')}/billing`,
     });
-
-    return {
-      statusCode: 200,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ success: true, url: session.url }),
-    };
+    return json(200, { success: true, url: session.url });
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    console.error('Portal session error:', message);
-    return { statusCode: 500, body: JSON.stringify({ error: message }) };
+    console.error('Portal session error:', err instanceof Error ? err.message : err);
+    return json(502, { error: 'The billing portal could not be opened. Please try again shortly.' });
   }
 }

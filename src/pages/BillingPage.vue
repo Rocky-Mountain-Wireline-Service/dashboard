@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
-import { useAuth0 } from '@auth0/auth0-vue';
 import DashboardLayout from '@/components/layout/DashboardLayout.vue';
 import {
   CreditCard,
@@ -14,12 +13,15 @@ import {
   RefreshCw,
 } from 'lucide-vue-next';
 import config from '@/config/dashboard';
+import { useApi } from '@/composables/useApi';
 
-const { getAccessTokenSilently } = useAuth0();
+const api = useApi();
 
 const billing = config.billing;
 const loading = ref(true);
 const error = ref<string | null>(null);
+/** False when the server has no Stripe key or customer yet. */
+const configured = ref(true);
 
 interface Subscription {
   id: string;
@@ -46,10 +48,11 @@ interface Invoice {
 }
 
 interface PaymentMethod {
+  type: 'card' | 'bank';
   brand: string;
   last4: string;
-  expMonth: number;
-  expYear: number;
+  expMonth: number | null;
+  expYear: number | null;
 }
 
 const subscription = ref<Subscription | null>(null);
@@ -78,61 +81,48 @@ function capitalizeFirst(str: string) {
 }
 
 async function fetchBillingSummary() {
-  if (!billing?.stripeCustomerId) return;
-
   loading.value = true;
   error.value = null;
 
   try {
-    const token = await getAccessTokenSilently();
-    const res = await fetch(
-      `/.netlify/functions/stripe-get-billing-summary?customerId=${billing.stripeCustomerId}`,
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
+    const res = await api('stripe-get-billing-summary');
+    const data = await res.json().catch(() => null);
+    if (!data || typeof data !== 'object') throw new Error('The billing service is not responding.');
 
-    if (!res.ok) throw new Error('Failed to load billing data');
+    if (data.configured === false) {
+      configured.value = false;
+      return;
+    }
+    if (!res.ok || !data.success) throw new Error(data.error || 'Billing information could not be loaded.');
 
-    const data = await res.json();
-    if (!data.success) throw new Error(data.error || 'Unknown error');
-
+    configured.value = true;
     subscription.value = data.subscription;
     pendingCharges.value = data.pendingCharges || [];
     recentPayments.value = data.recentPayments || [];
     paymentMethod.value = data.paymentMethod;
   } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Failed to load billing data';
+    error.value = err instanceof Error ? err.message : 'Billing information could not be loaded.';
   } finally {
     loading.value = false;
   }
 }
 
+/** Shown beside the buttons, so a portal failure does not replace the page. */
+const portalError = ref<string | null>(null);
+
 async function openPortal() {
-  if (!billing?.stripeCustomerId) return;
-
   portalLoading.value = true;
+  portalError.value = null;
   try {
-    const token = await getAccessTokenSilently();
-    const res = await fetch('/.netlify/functions/stripe-create-portal-session', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        customerId: billing.stripeCustomerId,
-        returnUrl: window.location.href,
-      }),
-    });
+    const res = await api('stripe-create-portal-session', { method: 'POST' });
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data?.url) throw new Error(data?.error || 'The billing portal could not be opened.');
 
-    const data = await res.json();
-    if (data.success && data.url) {
-      window.open(data.url, '_blank');
-    } else {
-      throw new Error(data.error || 'Could not create portal session');
-    }
+    // Same tab: a window opened after an await is not tied to the click, so
+    // Safari blocks it as a pop-up. Stripe sends the visitor back here.
+    window.location.assign(data.url);
   } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Failed to open billing portal';
-  } finally {
+    portalError.value = err instanceof Error ? err.message : 'The billing portal could not be opened.';
     portalLoading.value = false;
   }
 }
@@ -143,20 +133,19 @@ onMounted(fetchBillingSummary);
 <template>
   <DashboardLayout page-title="Billing">
     <!-- Not configured -->
-    <div v-if="!billing?.stripeCustomerId" class="billing-placeholder">
-      <CreditCard :size="48" class="billing-placeholder__icon" />
-      <h2>Billing Not Configured</h2>
-      <p>Billing has not been set up for this dashboard yet. Contact your web administrator for assistance.</p>
-    </div>
-
-    <!-- Loading -->
-    <div v-else-if="loading" class="billing-loading">
+    <div v-if="loading" class="billing-loading" role="status">
       <Loader2 :size="32" class="billing-loading__spinner" />
       <p>Loading billing information...</p>
     </div>
 
     <!-- Error -->
-    <div v-else-if="error" class="billing-error">
+    <div v-else-if="!configured" class="billing-placeholder">
+      <CreditCard :size="48" class="billing-placeholder__icon" aria-hidden="true" />
+      <h2>Billing is being set up</h2>
+      <p>Your subscription and invoices will appear here once billing has been connected.</p>
+    </div>
+
+    <div v-else-if="error" class="billing-error" role="alert">
       <AlertCircle :size="20" />
       <span>{{ error }}</span>
       <button class="billing-btn billing-btn--secondary" @click="fetchBillingSummary">
@@ -167,6 +156,10 @@ onMounted(fetchBillingSummary);
 
     <!-- Billing Content -->
     <div v-else class="billing-grid">
+      <p v-if="portalError" class="billing-notice billing-notice--warning billing-grid__notice" role="alert">
+        {{ portalError }}
+      </p>
+
       <!-- Subscription Card -->
       <div class="billing-card">
         <div class="billing-card__header">
@@ -185,7 +178,7 @@ onMounted(fetchBillingSummary);
               <CheckCircle v-if="subscription.status === 'active'" :size="14" />
               <AlertCircle v-else-if="subscription.status === 'past_due'" :size="14" />
               <XCircle v-else-if="subscription.status === 'canceled'" :size="14" />
-              {{ capitalizeFirst(subscription.status.replace('_', ' ')) }}
+              {{ capitalizeFirst(subscription.status.replace(/_/g, ' ')) }}
             </span>
           </div>
           <div class="billing-detail">
@@ -215,7 +208,7 @@ onMounted(fetchBillingSummary);
       </div>
 
       <!-- Pending Charges Card -->
-      <div v-if="billing.showPendingCharges" class="billing-card">
+      <div v-if="billing?.showPendingCharges" class="billing-card">
         <div class="billing-card__header">
           <Clock :size="20" />
           <h3>Pending Charges</h3>
@@ -306,7 +299,7 @@ onMounted(fetchBillingSummary);
                 <span class="billing-payment-method__number">&bull;&bull;&bull;&bull; {{ paymentMethod.last4 }}</span>
               </div>
             </div>
-            <span class="billing-payment-method__exp">
+            <span v-if="paymentMethod.expMonth && paymentMethod.expYear" class="billing-payment-method__exp">
               Expires {{ String(paymentMethod.expMonth).padStart(2, '0') }}/{{ paymentMethod.expYear }}
             </span>
           </div>
@@ -330,6 +323,8 @@ onMounted(fetchBillingSummary);
 </template>
 
 <style scoped>
+.billing-grid__notice { grid-column: 1 / -1; }
+
 .billing-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
@@ -409,27 +404,30 @@ onMounted(fetchBillingSummary);
   font-weight: 600;
   padding: 0.25rem 0.625rem;
   border-radius: 999px;
+  /* Any status without its own colour reads as "needs attention". */
+  background-color: rgba(245, 158, 11, 0.14);
+  color: var(--color-warn);
 }
 
 .billing-badge--active {
-  background-color: rgba(16, 185, 129, 0.12);
-  color: #059669;
+  background-color: rgba(16, 185, 129, 0.14);
+  color: var(--color-up);
 }
 
 .billing-badge--past_due {
-  background-color: rgba(245, 158, 11, 0.12);
-  color: #d97706;
+  background-color: rgba(245, 158, 11, 0.14);
+  color: var(--color-warn);
 }
 
 .billing-badge--canceled,
 .billing-badge--incomplete_expired {
-  background-color: rgba(239, 68, 68, 0.12);
-  color: #dc2626;
+  background-color: rgba(239, 68, 68, 0.14);
+  color: var(--color-down);
 }
 
 .billing-badge--trialing {
-  background-color: rgba(99, 102, 241, 0.12);
-  color: #4f46e5;
+  background-color: rgba(99, 102, 241, 0.14);
+  color: var(--color-info);
 }
 
 /* Invoice rows */
@@ -583,7 +581,7 @@ onMounted(fetchBillingSummary);
 
 .billing-notice--warning {
   background-color: rgba(245, 158, 11, 0.1);
-  color: #d97706;
+  color: var(--color-warn);
 }
 
 /* States */
@@ -638,7 +636,7 @@ onMounted(fetchBillingSummary);
   padding: 0.75rem 1rem;
   border-radius: var(--border-radius);
   background-color: rgba(239, 68, 68, 0.08);
-  color: #dc2626;
+  color: var(--color-down);
   font-size: 0.875rem;
 }
 </style>

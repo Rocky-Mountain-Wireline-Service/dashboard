@@ -16,6 +16,8 @@
   /* Trend colours, dark enough to read as small text on the card surface. */
   --color-up: #15803d;
   --color-down: #b91c1c;
+  --color-warn: #92400e;
+  --color-info: #4338ca;
   --color-sidebar-bg: #380506;
   --color-sidebar-text: #e5e7eb;
   --color-sidebar-hover: #540709;
@@ -37,6 +39,8 @@
   --color-border: #3c3d4b;
   --color-up: #4ade80;
   --color-down: #f87171;
+  --color-warn: #fbbf24;
+  --color-info: #a5b4fc;
   --color-sidebar-bg: #250304;
   --color-sidebar-text: #d1d5db;
   --color-sidebar-hover: #420607;
