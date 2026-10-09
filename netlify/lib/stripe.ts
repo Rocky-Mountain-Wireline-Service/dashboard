@@ -12,11 +12,16 @@ import Stripe from 'stripe';
  *                        restricted key is enough: read access to customers,
  *                        subscriptions, invoices and products, write access to
  *                        customer portal sessions
- *   STRIPE_CUSTOMER_ID   cus_…
+ *   STRIPE_CUSTOMER_ID   cus_… — or several, comma-separated, when the same
+ *                        client has more than one record in Stripe (a second
+ *                        one is easy to create by invoicing a new email
+ *                        address). The first is the primary: it is the one
+ *                        the customer portal opens. Invoices from all of them
+ *                        are shown together.
  *
  * STRIPE_SECRET_KEY is accepted in place of STRIPE_CONFIG.
  */
-export function billingContext(): { stripe: Stripe; customerId: string } | null {
+export function billingContext(): { stripe: Stripe; customerId: string; customerIds: string[] } | null {
   let secretKey = process.env.STRIPE_SECRET_KEY;
   if (!secretKey && process.env.STRIPE_CONFIG) {
     try {
@@ -25,7 +30,11 @@ export function billingContext(): { stripe: Stripe; customerId: string } | null 
       // Malformed JSON is the same as not configured.
     }
   }
-  const customerId = process.env.STRIPE_CUSTOMER_ID;
+  const customerIds = (process.env.STRIPE_CUSTOMER_ID ?? '')
+    .split(',')
+    .map((id) => id.trim())
+    .filter(Boolean);
+  const [customerId] = customerIds;
   if (!secretKey || !customerId) return null;
-  return { stripe: new Stripe(secretKey), customerId };
+  return { stripe: new Stripe(secretKey), customerId, customerIds };
 }

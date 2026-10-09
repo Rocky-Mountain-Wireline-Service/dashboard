@@ -19,8 +19,21 @@ export function devFunctions(): Plugin {
     configureServer(server) {
       // The functions read process.env, as they do on Netlify. An empty prefix
       // loads every variable in .env, not only the VITE_ ones meant for the browser.
+      //
+      // Vite restarts in the same process when .env is edited, and loadEnv lets
+      // anything already in process.env win. Without clearing what the previous
+      // run injected, an edited value would never take effect until a manual
+      // restart — so those keys are remembered and removed first.
+      const store = globalThis as { __rmwsInjectedEnv?: Set<string> };
+      for (const key of store.__rmwsInjectedEnv ?? []) delete process.env[key];
+      const injected = (store.__rmwsInjectedEnv = new Set<string>());
+
       const env = loadEnv(server.config.mode, server.config.root, '');
-      for (const [key, value] of Object.entries(env)) process.env[key] ??= value;
+      for (const [key, value] of Object.entries(env)) {
+        if (key in process.env) continue;
+        process.env[key] = value;
+        injected.add(key);
+      }
 
       server.middlewares.use('/.netlify/functions', async (req, res) => {
         const url = new URL(req.url ?? '/', 'http://localhost');

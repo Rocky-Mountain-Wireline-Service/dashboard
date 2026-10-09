@@ -77,25 +77,37 @@ export async function handler(event: { headers: Record<string, string> }) {
 
   const ctx = billingContext();
   if (!ctx) return json(200, { configured: false });
-  const { stripe, customerId } = ctx;
+  const { stripe, customerId, customerIds } = ctx;
 
   try {
-    const [customer, subscriptions, openInvoices, paidInvoices] = await Promise.all([
-      stripe.customers.retrieve(customerId, { expand: ['invoice_settings.default_payment_method'] }),
-      stripe.subscriptions.list({
-        customer: customerId,
-        status: 'all',
-        limit: 10,
-        expand: ['data.default_payment_method'],
-      }),
-      stripe.invoices.list({ customer: customerId, status: 'open', limit: 10 }),
-      stripe.invoices.list({ customer: customerId, status: 'paid', limit: 10 }),
-    ]);
+    // One round of requests per customer record, gathered into single lists.
+    const perCustomer = await Promise.all(
+      customerIds.map((id) =>
+        Promise.all([
+          stripe.customers.retrieve(id, { expand: ['invoice_settings.default_payment_method'] }),
+          stripe.subscriptions.list({
+            customer: id,
+            status: 'all',
+            limit: 10,
+            expand: ['data.default_payment_method'],
+          }),
+          stripe.invoices.list({ customer: id, status: 'open', limit: 10 }),
+          stripe.invoices.list({ customer: id, status: 'paid', limit: 10 }),
+        ])
+      )
+    );
 
-    if (customer.deleted) {
+    const customers = perCustomer.flatMap(([c]) => (c.deleted ? [] : [c as Stripe.Customer]));
+    if (!customers.some((c) => c.id === customerId)) {
       console.error(`Stripe customer ${customerId} has been deleted.`);
       return json(200, { configured: false });
     }
+
+    const newestFirst = <T extends { created: number }>(rows: T[]) =>
+      rows.sort((a, b) => b.created - a.created);
+    const subscriptions = { data: newestFirst(perCustomer.flatMap(([, s]) => s.data)) };
+    const openInvoices = { data: newestFirst(perCustomer.flatMap(([, , o]) => o.data)) };
+    const paidInvoices = { data: newestFirst(perCustomer.flatMap(([, , , p]) => p.data)).slice(0, 10) };
 
     // The newest subscription is not necessarily the current one: a cancelled
     // plan that was later replaced would otherwise hide the plan now running.
@@ -157,8 +169,9 @@ export async function handler(event: { headers: Record<string, string> }) {
       })),
       // The customer's default, or failing that the one the subscription charges.
       paymentMethod:
-        describePaymentMethod(customer.invoice_settings?.default_payment_method) ??
-        describePaymentMethod(sub?.default_payment_method),
+        customers
+          .map((c) => describePaymentMethod(c.invoice_settings?.default_payment_method))
+          .find(Boolean) ?? describePaymentMethod(sub?.default_payment_method),
     };
 
     return json(200, { configured: true, success: true, ...summary });
