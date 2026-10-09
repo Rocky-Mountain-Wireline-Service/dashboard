@@ -49,19 +49,33 @@ const STATUS_FILTERS: { key: Status | 'open' | 'all'; label: string }[] = [
 const state = ref<'loading' | 'ready' | 'setup' | 'error'>('loading');
 const message = ref('');
 const rows = ref<Summary[]>([]);
+/** How many match the current filters in all, of which `rows` holds the pages loaded so far. */
+const total = ref(0);
+const loadingMore = ref(false);
 const counts = ref<{ kind: Kind; status: Status; n: number }[]>([]);
 
 const kind = ref<Kind | 'all'>('all');
 const status = ref<Status | 'open' | 'all'>('open');
 const search = ref('');
 
-async function loadList() {
+function filterParams(): URLSearchParams {
+  const params = new URLSearchParams();
+  if (kind.value !== 'all') params.set('kind', kind.value);
+  if (status.value !== 'open') params.set('status', status.value);
+  if (search.value.trim()) params.set('q', search.value.trim());
+  return params;
+}
+
+/**
+ * Loads the first page of the list, or appends the next one. Changes to a
+ * single row do not come through here: they patch the row in place, so saving a
+ * note three pages down does not snap the list back to its first page.
+ */
+async function loadList(mode: 'replace' | 'more' = 'replace') {
   message.value = '';
   try {
-    const params = new URLSearchParams();
-    if (kind.value !== 'all') params.set('kind', kind.value);
-    if (status.value !== 'open') params.set('status', status.value);
-    if (search.value.trim()) params.set('q', search.value.trim());
+    const params = filterParams();
+    if (mode === 'more') params.set('offset', String(rows.value.length));
 
     const res = await api(`form-submissions?${params}`);
     const data = await res.json().catch(() => null);
@@ -72,13 +86,26 @@ async function loadList() {
     }
     if (!res.ok) throw new Error(data.error || 'Submissions could not be loaded.');
 
-    rows.value = data.submissions ?? [];
+    rows.value = mode === 'more' ? [...rows.value, ...(data.submissions ?? [])] : data.submissions ?? [];
+    total.value = data.total ?? rows.value.length;
     counts.value = data.counts ?? [];
     state.value = 'ready';
   } catch (err) {
     message.value = err instanceof Error ? err.message : 'Submissions could not be loaded.';
     state.value = 'error';
   }
+}
+
+async function loadMore() {
+  loadingMore.value = true;
+  await loadList('more');
+  loadingMore.value = false;
+}
+
+/** After a change to one row: patch it where it sits rather than reloading the pages. */
+function patchRow(id: string, change: Partial<Summary>) {
+  const row = rows.value.find((r) => r.id === id);
+  if (row) Object.assign(row, change);
 }
 
 /** How many are still waiting, per tab — the number that says where to look. */
@@ -88,13 +115,13 @@ function newCount(tab: Kind | 'all'): number {
     .reduce((sum, c) => sum + c.n, 0);
 }
 
-watch([kind, status], loadList);
+watch([kind, status], () => loadList());
 
 // Typing should not fire a request per keystroke.
 let searchTimer: ReturnType<typeof setTimeout> | undefined;
 watch(search, () => {
   clearTimeout(searchTimer);
-  searchTimer = setTimeout(loadList, 300);
+  searchTimer = setTimeout(() => loadList(), 300);
 });
 
 // ─── Presentation helpers ───────────────────────────────────────────────────
@@ -186,11 +213,37 @@ async function update(change: { status?: Status; notes?: string }) {
 
     if (detail.value?.id === id) Object.assign(detail.value, change);
     if (change.notes !== undefined) savedNote.value = true;
-    await loadList();
+    patchRow(id, change);
+    void refreshCounts(change.status !== undefined ? { id, status: change.status } : undefined);
   } catch (err) {
     detailError.value = err instanceof Error ? err.message : 'That change could not be saved.';
   } finally {
     saving.value = false;
+  }
+}
+
+/**
+ * The tab badges come from the server. Refreshing them is one small request;
+ * a row that no longer belongs in the current view (archived, or filtered by a
+ * status it has just left) is dropped from the list locally.
+ */
+async function refreshCounts(changed?: { id: string; status: Status }) {
+  if (changed) {
+    const hidden =
+      (status.value === 'open' && changed.status === 'archived') ||
+      (status.value !== 'open' && status.value !== 'all' && status.value !== changed.status);
+    if (hidden) {
+      rows.value = rows.value.filter((r) => r.id !== changed.id);
+      total.value = Math.max(0, total.value - 1);
+    }
+  }
+  try {
+    const params = filterParams();
+    params.set('offset', '1000000');
+    const data = await (await api(`form-submissions?${params}`)).json();
+    if (Array.isArray(data?.counts)) counts.value = data.counts;
+  } catch {
+    // The badges are a convenience; the change itself has been saved.
   }
 }
 
@@ -211,8 +264,11 @@ async function remove() {
     });
     const data = await res.json().catch(() => null);
     if (!res.ok) throw new Error(data?.error || 'That submission could not be deleted.');
+    const id = detail.value.id;
     close();
-    await loadList();
+    rows.value = rows.value.filter((r) => r.id !== id);
+    total.value = Math.max(0, total.value - 1);
+    void refreshCounts();
   } catch (err) {
     detailError.value = err instanceof Error ? err.message : 'That submission could not be deleted.';
   } finally {
@@ -253,11 +309,36 @@ function replyHref(row: Detail): string {
 
 // ─── Export ─────────────────────────────────────────────────────────────────
 
-function exportCsv() {
+const exporting = ref(false);
+
+async function exportCsv() {
+  exporting.value = true;
+  message.value = '';
+  let all: Summary[];
+  try {
+    const params = filterParams();
+    params.set('all', '1');
+    const res = await api(`form-submissions?${params}`);
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !Array.isArray(data?.submissions)) throw new Error(data?.error || 'The export could not be prepared.');
+    all = data.submissions;
+  } catch (err) {
+    exportError.value = err instanceof Error ? err.message : 'The export could not be prepared.';
+    exporting.value = false;
+    return;
+  }
+  exportError.value = '';
+  writeCsv(all);
+  exporting.value = false;
+}
+
+const exportError = ref('');
+
+function writeCsv(all: Summary[]) {
   // Name, email and phone already have their own columns; repeating them under
   // each form's own wording for the same thing only widens the sheet.
   const REPEATED = /^((full )?name|e-?mail( address)?|(mobile )?phone( number)?)$/i;
-  const labels = [...new Set(rows.value.flatMap((r) => r.fields.map((f) => f.label)))].filter(
+  const labels = [...new Set(all.flatMap((r) => r.fields.map((f) => f.label)))].filter(
     (label) => !REPEATED.test(label.trim())
   );
   const header = ['Received', 'Type', 'Status', 'Name', 'Email', 'Phone', ...labels, 'Attachments', 'Notes'];
@@ -269,7 +350,7 @@ function exportCsv() {
     return `"${text.replace(/"/g, '""')}"`;
   };
 
-  const lines = rows.value.map((r) =>
+  const lines = all.map((r) =>
     [
       formatDate(r.createdAt, true), KIND_LABELS[r.kind], STATUS_LABELS[r.status], r.name, r.email, r.phone,
       ...labels.map((label) => r.fields.find((f) => f.label === label)?.value ?? ''),
@@ -328,10 +409,13 @@ onMounted(loadList);
           <select id="subs-status" v-model="status" class="subs__select">
             <option v-for="option in STATUS_FILTERS" :key="option.key" :value="option.key">{{ option.label }}</option>
           </select>
-          <button type="button" class="subs__btn" :disabled="!rows.length" @click="exportCsv">
-            <FileDown :size="16" aria-hidden="true" /> Export
+          <button type="button" class="subs__btn" :disabled="!rows.length || exporting" @click="exportCsv">
+            <Loader2 v-if="exporting" :size="16" class="subs__spin" aria-hidden="true" />
+            <FileDown v-else :size="16" aria-hidden="true" />
+            Export
           </button>
         </div>
+        <p v-if="exportError" class="subs__error" role="alert">{{ exportError }}</p>
 
         <div v-if="state === 'loading'" class="subs__status" role="status">
           <Loader2 :size="18" class="subs__spin" aria-hidden="true" /> Loading submissions…
@@ -339,14 +423,18 @@ onMounted(loadList);
 
         <div v-else-if="state === 'error'" class="subs__status" role="alert">
           <span>{{ message }}</span>
-          <button type="button" class="subs__btn" @click="loadList"><RefreshCw :size="14" aria-hidden="true" /> Try again</button>
+          <button type="button" class="subs__btn" @click="loadList()"><RefreshCw :size="14" aria-hidden="true" /> Try again</button>
         </div>
 
         <p v-else-if="!rows.length" class="subs__status">
           {{ search || status !== 'open' || kind !== 'all' ? 'Nothing matches those filters.' : 'No submissions yet. They will appear here as they arrive.' }}
         </p>
 
-        <ul v-else class="subs__list">
+        <template v-else>
+        <p class="subs__count" role="status">
+          Showing {{ rows.length.toLocaleString() }} of {{ total.toLocaleString() }}
+        </p>
+        <ul class="subs__list">
           <li v-for="row in rows" :key="row.id">
             <button
               type="button"
@@ -374,6 +462,11 @@ onMounted(loadList);
             </button>
           </li>
         </ul>
+        <button v-if="rows.length < total" type="button" class="subs__btn subs__more" :disabled="loadingMore" @click="loadMore">
+          <Loader2 v-if="loadingMore" :size="16" class="subs__spin" aria-hidden="true" />
+          Show {{ Math.min(100, total - rows.length) }} more
+        </button>
+        </template>
       </section>
 
       <!-- ── Detail ───────────────────────────────────────────────────── -->
@@ -546,6 +639,8 @@ onMounted(loadList);
 @keyframes subs-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .subs__spin { animation: none; } }
 
+.subs__count { margin-bottom: 0.5rem; font-size: 0.75rem; color: var(--color-text-secondary, var(--color-text)); }
+.subs__more { width: 100%; margin-top: 0.75rem; }
 .subs__list { list-style: none; display: flex; flex-direction: column; gap: 0.5rem; }
 .subs__row {
   width: 100%; display: flex; flex-direction: column; gap: 0.3rem; padding: 0.75rem 0.875rem; text-align: left;
@@ -579,7 +674,7 @@ onMounted(loadList);
 .subs__state--done { color: var(--color-up); }
 
 /* ── Detail ───────────────────────────────────────────────────────────── */
-.subs__detail-pane { position: sticky; top: 0; min-width: 0; }
+.subs__detail-pane { position: sticky; top: 0; min-width: 0; max-height: calc(100dvh - 7rem); overflow-y: auto; }
 .subs__placeholder {
   display: flex; flex-direction: column; align-items: center; gap: 0.75rem; padding: 4rem 1rem; text-align: center;
   border: 1px dashed var(--color-border); border-radius: var(--border-radius);
@@ -650,7 +745,7 @@ onMounted(loadList);
 /* One pane at a time where two will not fit: the list, or what was opened. */
 @media (max-width: 900px) {
   .subs { grid-template-columns: minmax(0, 1fr); }
-  .subs__detail-pane { position: static; display: none; }
+  .subs__detail-pane { position: static; display: none; max-height: none; overflow: visible; }
   .subs--detail-open .subs__list-pane { display: none; }
   .subs--detail-open .subs__detail-pane { display: block; }
   .subs__back { display: inline-flex; }

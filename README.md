@@ -59,6 +59,7 @@ The public site saves each contact form and job application to the agency databa
 
 - Tables: `db/form-submissions.sql`, applied with `pnpm db:migrate` (additive; safe to re-run).
 - The public site needs `TURSO_CONFIG` and `FORMS_CLIENT_ID` (this dashboard's `clientId`) in its own Netlify environment. Without them it emails only and nothing appears here.
+- Earlier submissions from Netlify Forms are brought in with `node scripts/import-netlify-forms.mjs <folder of CSV exports> --write` (dry run without `--write`; safe to re-run). It fetches the attached résumés while their links still work, marks the last 30 days New and the rest Done, and leaves out spam-trap rows, IP addresses and browser strings.
 - Which inbox a form lands in comes from its name: anything with "employ", "applic", "career" or "job" is a job application; "contact", "sales", "inquiry" or "quote" is a sales contact.
 
 ### Offline payments

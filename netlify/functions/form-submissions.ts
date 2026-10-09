@@ -5,7 +5,8 @@ import config from '../../src/config/dashboard';
 /**
  * The dashboard's inbox of website form submissions.
  *
- *   GET                         list, newest first (?kind=&status=&q=)
+ *   GET                         list, newest first (?kind=&status=&q=&offset=)
+ *   GET    ?all=1               the same list unpaged, for an export
  *   GET    ?id=…                one submission, with its attachments listed
  *   GET    ?file=…              one attachment, as base64
  *   PATCH  { id, status?, notes? }
@@ -20,7 +21,9 @@ const CLIENT = config.clientId;
 const STATUSES = ['new', 'in_progress', 'done', 'archived'];
 const KINDS = ['contact', 'application', 'other'];
 const MAX_NOTES = 5000;
-const LIST_LIMIT = 300;
+/** Rows per page of the list; an export asks for everything at once instead. */
+const PAGE_SIZE = 100;
+const EXPORT_LIMIT = 10_000;
 
 interface Field {
   label: string;
@@ -137,14 +140,21 @@ export async function handler(event: {
         args.push(like, like, like, like);
       }
 
-      const [rows, counts] = await Promise.all([
+      const limit = query.all ? EXPORT_LIMIT : PAGE_SIZE;
+      const offset = query.all ? 0 : Math.max(0, Math.floor(Number(query.offset)) || 0);
+
+      const [rows, matching, counts] = await Promise.all([
         db.execute({
           sql: `SELECT s.id, s.kind, s.form_title, s.name, s.email, s.phone, s.fields, s.status, s.notes, s.created_at,
                        (SELECT COUNT(*) FROM form_submission_files f WHERE f.submission_id = s.id) AS file_count
                   FROM form_submissions s
                  WHERE ${where.join(' AND ')}
-                 ORDER BY s.created_at DESC
-                 LIMIT ${LIST_LIMIT}`,
+                 ORDER BY s.created_at DESC, s.id
+                 LIMIT ${limit} OFFSET ${offset}`,
+          args,
+        }),
+        db.execute({
+          sql: `SELECT COUNT(*) AS n FROM form_submissions s WHERE ${where.join(' AND ')}`,
           args,
         }),
         db.execute({
@@ -169,6 +179,7 @@ export async function handler(event: {
           createdAt: iso(row.created_at),
           fileCount: Number(row.file_count) || 0,
         })),
+        total: Number(matching.rows[0]?.n) || 0,
         counts: counts.rows.map((r) => ({ kind: r.kind, status: r.status, n: Number(r.n) || 0 })),
       });
     }
