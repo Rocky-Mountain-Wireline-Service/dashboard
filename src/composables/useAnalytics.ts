@@ -1,7 +1,7 @@
 import { ref } from 'vue';
 import { useApi } from '@/composables/useApi';
 
-export type Period = '7d' | '30d' | '13w';
+export type Period = '7d' | '30d' | '13w' | '12m' | 'all';
 
 /**
  * A "visit" throughout is an engaged one: it lasted ten seconds, opened a
@@ -24,9 +24,10 @@ export interface Totals {
 export interface AnalyticsReport {
   configured: true;
   period: Period;
-  unit: 'day' | 'week';
+  unit: 'day' | 'week' | 'month';
   current: Totals;
-  previous: Totals;
+  /** Null for "all time", which has nothing before it. */
+  previous: Totals | null;
   /** False until the site has sent its first enquiry event. */
   trackingActive: boolean;
   series: { key: string; visits: number }[];
@@ -82,6 +83,37 @@ export function useAnalytics() {
   }
 
   return { state, report, message, load };
+}
+
+export interface SearchReport {
+  current: { clicks: number; impressions: number; position: number | null };
+  previous: { clicks: number; impressions: number; position: number | null } | null;
+  queries: { query: string; clicks: number; impressions: number; position: number }[];
+}
+
+/**
+ * Search terms from Google Search Console. Separate from the main report so a
+ * gap in one never blanks the other; `connected` stays false until Search
+ * Console access has been set up.
+ */
+export function useSearchTerms() {
+  const api = useApi();
+  const search = ref<SearchReport | null>(null);
+  const connected = ref(false);
+
+  async function loadSearch(period: Period) {
+    try {
+      const res = await api(`search-proxy?period=${period}`);
+      const data = await res.json().catch(() => null);
+      connected.value = Boolean(res.ok && data?.configured && data.current);
+      search.value = connected.value ? (data as SearchReport) : null;
+    } catch {
+      connected.value = false;
+      search.value = null;
+    }
+  }
+
+  return { search, connected, loadSearch };
 }
 
 export function formatDuration(seconds: number): string {

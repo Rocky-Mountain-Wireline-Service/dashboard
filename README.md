@@ -20,7 +20,7 @@ pnpm dev           # the app and its server functions, at http://localhost:5173
 | Overview | Nothing. Links come from `src/config/dashboard.ts`. |
 | Analytics | A Google service account with Viewer access to the GA4 property. |
 | Contact & Support | A Resend API key and a verified sending domain. |
-| Billing | A Stripe key and the customer ID, with the customer portal switched on in Stripe. |
+| Billing | A Stripe key and the customer ID, with the customer portal switched on in Stripe. `TURSO_CONFIG` for offline payments. |
 | Content Kit | Hidden while `contentKit.enabled` is `false` in the config. |
 
 A section that is not set up is left out of the menu and has no route.
@@ -42,6 +42,19 @@ Until these are set the Analytics page says it is being connected rather than sh
 Everything is counted in **engaged visits**: sessions that lasted ten seconds, opened a second page, or got in touch. Raw visitor counts are not shown, because well over half of this site's sessions are automated (a steady stream from Singapore and from cloud data centres that loads one page and leaves). The page states how many hits were left out.
 
 The "People getting in touch" figures come from events the rebuilt public site sends: `generate_lead` (a form sent; counted as a job application when sent from `/employment`, otherwise as a contact form) and `contact_click` (a phone number or email address tapped). Until the first of these arrives, the section says it is not being counted yet rather than showing zeros.
+
+### Connecting Search Console
+
+The "What people searched on Google" section uses the same service account. Two steps, once:
+
+1. In the service account's Google Cloud project, enable the **Google Search Console API**.
+2. In Search Console → Settings → Users and permissions, add the service account's email as a user (Restricted is enough) on the rmws.com property.
+
+No new variables are needed; the property is found by the client's domain. Set `GSC_SITE_URL` only to force a particular one. Search Console keeps sixteen months of data and runs about two days behind.
+
+### Offline payments
+
+Invoices paid by check or transfer are read from the agency database (`offline_invoices`, by this dashboard's client ID) and listed with the Stripe ones. A maintenance plan prepaid that way is shown as the subscription when Stripe has none running. Needs `TURSO_CONFIG`; turned on by `billing.showOfflineInvoices` in the config.
 
 ## Who can get in
 

@@ -45,6 +45,9 @@ interface Invoice {
   paidAt?: number | null;
   hostedInvoiceUrl: string | null;
   invoicePdf?: string | null;
+  /** Offline invoices: how it was paid, and that it cannot be paid online. */
+  method?: string | null;
+  offline?: boolean;
 }
 
 interface PaymentMethod {
@@ -178,6 +181,7 @@ onMounted(fetchBillingSummary);
               <CheckCircle v-if="subscription.status === 'active'" :size="14" />
               <AlertCircle v-else-if="subscription.status === 'past_due'" :size="14" />
               <XCircle v-else-if="subscription.status === 'canceled'" :size="14" />
+              <CheckCircle v-else-if="subscription.status === 'prepaid'" :size="14" />
               {{ capitalizeFirst(subscription.status.replace(/_/g, ' ')) }}
             </span>
           </div>
@@ -188,14 +192,15 @@ onMounted(fetchBillingSummary);
             </span>
           </div>
           <div v-if="subscription.nextBillingDate" class="billing-detail">
-            <span class="billing-detail__label">Next Billing</span>
+            <span class="billing-detail__label">{{ subscription.status === 'prepaid' ? 'Paid through' : 'Next Billing' }}</span>
             <span class="billing-detail__value">{{ formatDate(subscription.nextBillingDate) }}</span>
           </div>
           <div v-if="subscription.cancelAtPeriodEnd" class="billing-notice billing-notice--warning">
             Subscription will cancel at end of current period
           </div>
 
-          <button class="billing-btn billing-btn--primary" :disabled="portalLoading" @click="openPortal">
+          <!-- A prepaid plan has no Stripe subscription behind it to manage. -->
+          <button v-if="subscription.status !== 'prepaid'" class="billing-btn billing-btn--primary" :disabled="portalLoading" @click="openPortal">
             <Loader2 v-if="portalLoading" :size="16" class="billing-loading__spinner" />
             <ExternalLink v-else :size="16" />
             Manage Subscription
@@ -255,6 +260,7 @@ onMounted(fetchBillingSummary);
               <span class="billing-invoice-row__desc">{{ payment.description || payment.number || 'Payment' }}</span>
               <span class="billing-invoice-row__date">
                 {{ payment.paidAt ? formatDate(payment.paidAt) : formatDate(payment.created) }}
+                <template v-if="payment.method"> · Paid by {{ payment.method }}</template>
               </span>
             </div>
             <div class="billing-invoice-row__actions">
@@ -409,7 +415,8 @@ onMounted(fetchBillingSummary);
   color: var(--color-warn);
 }
 
-.billing-badge--active {
+.billing-badge--active,
+.billing-badge--prepaid {
   background-color: rgba(16, 185, 129, 0.14);
   color: var(--color-up);
 }

@@ -27,7 +27,7 @@ const config: DashboardConfig = {
   "billing": {
     "enabled": true,
     "showPendingCharges": true,
-    "showOfflineInvoices": false
+    "showOfflineInvoices": true
   },
   "analytics": {
     "provider": "ga4",

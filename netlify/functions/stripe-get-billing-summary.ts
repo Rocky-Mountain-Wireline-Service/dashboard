@@ -1,6 +1,8 @@
 import type Stripe from 'stripe';
 import { json, requireUser } from '../lib/auth';
 import { billingContext } from '../lib/stripe';
+import { tursoClient } from '../lib/turso';
+import config from '../../src/config/dashboard';
 
 interface BillingSummary {
   subscription: {
@@ -22,6 +24,8 @@ interface BillingSummary {
     created: number;
     dueDate: number | null;
     hostedInvoiceUrl: string | null;
+    /** Set for invoices settled outside Stripe; there is nothing to pay online. */
+    offline?: boolean;
   }>;
   recentPayments: Array<{
     id: string;
@@ -33,6 +37,8 @@ interface BillingSummary {
     paidAt: number | null;
     hostedInvoiceUrl: string | null;
     invoicePdf: string | null;
+    /** How an offline payment arrived — "check", "zelle" — when it was not by card. */
+    method?: string | null;
   }>;
   paymentMethod: {
     /** "card" or "bank" */
@@ -42,6 +48,106 @@ interface BillingSummary {
     expMonth: number | null;
     expYear: number | null;
   } | null;
+}
+
+/** A date column ("2026-09-17") as a timestamp at midday UTC, so no timezone shows it a day out. */
+const dayToUnix = (day: unknown): number | null => {
+  const ms = typeof day === 'string' ? Date.parse(`${day.slice(0, 10)}T12:00:00Z`) : NaN;
+  return Number.isNaN(ms) ? null : Math.floor(ms / 1000);
+};
+
+/**
+ * Invoices settled outside Stripe — by check or bank transfer — are recorded in
+ * the agency database instead. Without them the page shows a client who has
+ * paid in full as having paid nothing.
+ *
+ * Also returns the maintenance plan when it was prepaid that way: Stripe has no
+ * subscription for it, so the page would otherwise say there is no plan at all.
+ */
+async function offlineBilling(): Promise<{
+  paid: BillingSummary['recentPayments'];
+  pending: BillingSummary['pendingCharges'];
+  prepaidPlan: BillingSummary['subscription'];
+}> {
+  const empty = { paid: [], pending: [], prepaidPlan: null };
+  if (!config.billing?.showOfflineInvoices) return empty;
+  const db = tursoClient();
+  if (!db) return empty;
+
+  try {
+    const [invoices, prepaid] = await Promise.all([
+      db.execute({
+        sql: `SELECT id, invoice_number, amount, status, product_description,
+                     due_date, sent_date, paid_date, payment_method, pdf_url, created_at
+                FROM offline_invoices
+               WHERE client_id = ? AND status IN ('paid', 'sent')
+               ORDER BY COALESCE(paid_date, sent_date, created_at) DESC
+               LIMIT 20`,
+        args: [config.clientId],
+      }),
+      db.execute({
+        sql: `SELECT amount, metadata, created_at FROM billing_events
+               WHERE client_id = ? AND event_type = 'maintenance_prepaid'
+               ORDER BY created_at DESC LIMIT 1`,
+        args: [config.clientId],
+      }),
+    ]);
+
+    const paid: BillingSummary['recentPayments'] = [];
+    const pending: BillingSummary['pendingCharges'] = [];
+    for (const row of invoices.rows) {
+      const base = {
+        id: `offline-${row.id}`,
+        number: (row.invoice_number as string) ?? null,
+        amount: Number(row.amount) || 0,
+        currency: 'usd',
+        description: (row.product_description as string) ?? null,
+        created: dayToUnix(row.sent_date) ?? dayToUnix(row.created_at) ?? 0,
+        hostedInvoiceUrl: null,
+      };
+      if (row.status === 'paid') {
+        paid.push({
+          ...base,
+          paidAt: dayToUnix(row.paid_date),
+          invoicePdf: (row.pdf_url as string) ?? null,
+          method: (row.payment_method as string) ?? null,
+        });
+      } else {
+        pending.push({ ...base, dueDate: dayToUnix(row.due_date), offline: true });
+      }
+    }
+
+    let prepaidPlan: BillingSummary['subscription'] = null;
+    const event = prepaid.rows[0];
+    if (event) {
+      let meta: { nextBillingDate?: string; maintenanceCycle?: string } = {};
+      try {
+        meta = JSON.parse(String(event.metadata ?? '{}'));
+      } catch {
+        // The plan still shows, without a renewal date.
+      }
+      const next = dayToUnix(meta.nextBillingDate);
+      // Once the prepaid term has run out this is history, not the current plan.
+      if (!next || next * 1000 > Date.now()) {
+        prepaidPlan = {
+          id: 'prepaid-maintenance',
+          status: 'prepaid',
+          planName: 'Website maintenance',
+          amount: Number(event.amount) || 0,
+          currency: 'usd',
+          interval: meta.maintenanceCycle === 'monthly' ? 'month' : 'year',
+          nextBillingDate: next,
+          cancelAtPeriodEnd: false,
+        };
+      }
+    }
+
+    return { paid, pending, prepaidPlan };
+  } catch (err) {
+    // Stripe's half of the page is still worth showing.
+    console.error('Offline billing lookup failed:', err instanceof Error ? err.message : err);
+    return empty;
+  }
 }
 
 /** A subscription that is still running outranks one that has ended. */
@@ -81,6 +187,7 @@ export async function handler(event: { headers: Record<string, string> }) {
 
   try {
     // One round of requests per customer record, gathered into single lists.
+    const offlinePromise = offlineBilling();
     const perCustomer = await Promise.all(
       customerIds.map((id) =>
         Promise.all([
@@ -144,9 +251,17 @@ export async function handler(event: { headers: Record<string, string> }) {
       };
     }
 
+    const offline = await offlinePromise;
+    const newestPayment = (p: BillingSummary['recentPayments'][number]) => p.paidAt ?? p.created;
+
     const summary: BillingSummary = {
-      subscription,
-      pendingCharges: openInvoices.data.map((inv) => ({
+      // A plan still running in Stripe wins; a prepaid one fills the gap when
+      // Stripe has nothing live.
+      subscription:
+        subscription && LIVE.includes(subscription.status)
+          ? subscription
+          : offline.prepaidPlan ?? subscription,
+      pendingCharges: [...offline.pending, ...openInvoices.data.map((inv) => ({
         id: inv.id ?? '',
         number: inv.number,
         amount: inv.amount_remaining ?? inv.amount_due,
@@ -155,8 +270,8 @@ export async function handler(event: { headers: Record<string, string> }) {
         created: inv.created,
         dueDate: inv.due_date,
         hostedInvoiceUrl: inv.hosted_invoice_url ?? null,
-      })),
-      recentPayments: paidInvoices.data.map((inv) => ({
+      }))],
+      recentPayments: [...offline.paid, ...paidInvoices.data.map((inv) => ({
         id: inv.id ?? '',
         number: inv.number,
         amount: inv.amount_paid,
@@ -166,7 +281,9 @@ export async function handler(event: { headers: Record<string, string> }) {
         paidAt: inv.status_transitions?.paid_at ?? null,
         hostedInvoiceUrl: inv.hosted_invoice_url ?? null,
         invoicePdf: inv.invoice_pdf ?? null,
-      })),
+      }))]
+        .sort((x, y) => newestPayment(y) - newestPayment(x))
+        .slice(0, 12),
       // The customer's default, or failing that the one the subscription charges.
       paymentMethod:
         customers

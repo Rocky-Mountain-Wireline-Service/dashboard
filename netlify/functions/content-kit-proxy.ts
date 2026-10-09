@@ -8,7 +8,7 @@
  *
  * Env: TURSO_DATABASE_URL, TURSO_AUTH_TOKEN
  */
-import { createClient } from '@libsql/client';
+import { tursoClient } from '../lib/turso';
 import { requireUser } from '../lib/auth';
 import config from '../../src/config/dashboard';
 
@@ -120,25 +120,14 @@ export async function handler(event: {
     return { statusCode: 403, headers: corsHeaders, body: JSON.stringify({ error: 'Forbidden' }) };
   }
 
-  // TURSO_CONFIG is {"databaseUrl":"…","authToken":"…"}; the two separate
-  // variables are still read for projects set up before it existed.
-  let turso: { databaseUrl?: string; authToken?: string } = {};
-  try {
-    turso = JSON.parse(process.env.TURSO_CONFIG || '{}');
-  } catch {
-    // Malformed JSON is the same as not configured.
-  }
-  const dbUrl = turso.databaseUrl || process.env.TURSO_DATABASE_URL;
-  const dbToken = turso.authToken || process.env.TURSO_AUTH_TOKEN;
-  if (!dbUrl || !dbToken) {
+  const db = tursoClient();
+  if (!db) {
     return {
       statusCode: 500,
       headers: corsHeaders,
       body: JSON.stringify({ error: 'Database not configured. Set TURSO_CONFIG.' }),
     };
   }
-
-  const db = createClient({ url: dbUrl, authToken: dbToken });
 
   try {
     if (event.httpMethod === 'GET') {

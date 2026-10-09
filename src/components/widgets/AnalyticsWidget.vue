@@ -7,7 +7,9 @@ import { useAnalytics, pctChange, trendOf } from '@/composables/useAnalytics';
 const { state, report, load } = useAnalytics();
 
 const trend = computed(() =>
-  report.value ? trendOf(pctChange(report.value.current.visits, report.value.previous.visits)) : 'flat'
+  report.value?.previous
+    ? trendOf(pctChange(report.value.current.visits, report.value.previous.visits))
+    : 'flat'
 );
 
 onMounted(() => load('30d'));

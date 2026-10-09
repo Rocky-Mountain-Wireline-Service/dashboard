@@ -7,13 +7,14 @@ import {
 } from 'lucide-vue-next';
 import { Chart, BarController, BarElement, CategoryScale, LinearScale, Tooltip } from 'chart.js';
 import {
-  useAnalytics, formatDuration, pctChange, trendOf,
+  useAnalytics, useSearchTerms, formatDuration, pctChange, trendOf,
   type Period,
 } from '@/composables/useAnalytics';
 
 Chart.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip);
 
 const { state, report, message, load } = useAnalytics();
+const { search, connected: searchConnected, loadSearch } = useSearchTerms();
 const period = ref<Period>('30d');
 const chartCanvas = ref<HTMLCanvasElement | null>(null);
 let chartInstance: Chart | null = null;
@@ -22,19 +23,28 @@ const PERIOD_LABELS: Record<Period, string> = {
   '7d': 'Last 7 days',
   '30d': 'Last 30 days',
   '13w': 'Last 13 weeks',
+  '12m': 'Last 12 months',
+  all: 'All time',
 };
 const PERIOD_WORDS: Record<Period, string> = {
   '7d': 'in the last 7 days',
   '30d': 'in the last 30 days',
   '13w': 'in the last 13 weeks',
+  '12m': 'in the last 12 months',
+  all: 'since records began',
 };
 const PREV_PERIOD_WORDS: Record<Period, string> = {
   '7d': 'the 7 days before',
   '30d': 'the 30 days before',
   '13w': 'the 13 weeks before',
+  '12m': 'the 12 months before',
+  all: '',
 };
 
 async function fetchAnalytics() {
+  // Search terms load alongside and fill in when they arrive; they never hold
+  // up, or take down, the main report.
+  void loadSearch(period.value);
   await load(period.value);
   await nextTick();
   renderChart();
@@ -49,9 +59,11 @@ const plural = (n: number, one: string, many: string) => `${n.toLocaleString()} 
 
 // ─── Story ──────────────────────────────────────────────────────────────────
 
-const visitChange = computed(() =>
-  report.value ? pctChange(report.value.current.visits, report.value.previous.visits) : null
-);
+/** Change on the previous period, or null where there is none to compare with. */
+const changeIn = (pick: (t: NonNullable<typeof report.value>['current']) => number) =>
+  report.value?.previous ? pctChange(pick(report.value.current), pick(report.value.previous)) : null;
+
+const visitChange = computed(() => changeIn((t) => t.visits));
 
 const storyHeadline = computed(() => {
   if (!report.value) return '';
@@ -66,7 +78,11 @@ const storyHeadline = computed(() => {
   else if (change >= -10) trend = ` — about the same as ${prev}`;
   else trend = ` — down from ${prev}`;
 
-  return `Your site had ${plural(v, 'real visit', 'real visits')} ${PERIOD_WORDS[period.value]}${trend}.`;
+  const when =
+    period.value === 'all' && report.value.series[0]
+      ? `since ${monthLabel(report.value.series[0].key, 'long')}`
+      : PERIOD_WORDS[period.value];
+  return `Your site had ${plural(v, 'real visit', 'real visits')} ${when}${trend}.`;
 });
 
 const storySubline = computed(() => {
@@ -103,24 +119,26 @@ const mobileShare = computed(() => {
 
 const trafficCards = computed(() => {
   if (!report.value) return [];
-  const { current: c, previous: p } = report.value;
+  const c = report.value.current;
+  const visits = changeIn((t) => t.visits);
+  const time = changeIn((t) => t.avgSeconds);
   return [
-    { label: 'Real visits', value: c.visits.toLocaleString(), trend: trendLabel(pctChange(c.visits, p.visits)), dir: trendOf(pctChange(c.visits, p.visits)), icon: Users },
-    { label: 'Avg. time per visit', value: formatDuration(c.avgSeconds), trend: trendLabel(pctChange(c.avgSeconds, p.avgSeconds)), dir: trendOf(pctChange(c.avgSeconds, p.avgSeconds)), icon: Clock },
+    { label: 'Real visits', value: c.visits.toLocaleString(), trend: trendLabel(visits), dir: trendOf(visits), icon: Users },
+    { label: 'Avg. time per visit', value: formatDuration(c.avgSeconds), trend: trendLabel(time), dir: trendOf(time), icon: Clock },
     { label: 'On a phone', value: mobileShare.value === null ? '—' : `${mobileShare.value}%`, trend: 'of real visits', dir: 'flat' as const, icon: Smartphone, plain: true },
   ];
 });
 
 const enquiryCards = computed(() => {
   if (!report.value) return [];
-  const { current: c, previous: p } = report.value;
-  const card = (label: string, now: number, before: number, icon: unknown) => ({
-    label, value: now.toLocaleString(), trend: trendLabel(pctChange(now, before)), dir: trendOf(pctChange(now, before)), icon, plain: false,
+  const c = report.value.current;
+  const card = (label: string, now: number, change: number | null, icon: unknown) => ({
+    label, value: now.toLocaleString(), trend: trendLabel(change), dir: trendOf(change), icon, plain: false,
   });
   return [
-    card('Contact forms', c.contactForms, p.contactForms, FileText),
-    card('Job applications', c.applications, p.applications, Briefcase),
-    card('Phone & email taps', c.contactClicks, p.contactClicks, Phone),
+    card('Contact forms', c.contactForms, changeIn((t) => t.contactForms), FileText),
+    card('Job applications', c.applications, changeIn((t) => t.applications), Briefcase),
+    card('Phone & email taps', c.contactClicks, changeIn((t) => t.contactClicks), Phone),
   ];
 });
 
@@ -222,11 +240,23 @@ const sourceRows = computed(() => {
   ];
 });
 
+// ─── Search terms ───────────────────────────────────────────────────────────
+
+const searchClickChange = computed(() =>
+  search.value?.previous ? pctChange(search.value.current.clicks, search.value.previous.clicks) : null
+);
+
 // ─── Chart ──────────────────────────────────────────────────────────────────
 
-const chartLabel = computed(() => (report.value?.unit === 'week' ? 'Real visits by week' : 'Real visits by day'));
+const chartLabel = computed(() => `Real visits by ${report.value?.unit ?? 'day'}`);
 
-function pointLabel(key: string, unit: 'day' | 'week'): string {
+/** "2025-10" as "Oct 2025" (or "October 2025"). */
+function monthLabel(key: string, month: 'short' | 'long' = 'short'): string {
+  return new Date(`${key}-15T12:00:00`).toLocaleDateString('en-US', { month, year: 'numeric' });
+}
+
+function pointLabel(key: string, unit: 'day' | 'week' | 'month'): string {
+  if (unit === 'month') return monthLabel(key);
   // Parsed as local noon so the label cannot slip a day across a timezone.
   const label = new Date(`${key}T12:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   return unit === 'week' ? `Wk of ${label}` : label;
@@ -438,6 +468,41 @@ onBeforeUnmount(() => chartInstance?.destroy());
             <span class="ana__referrer-count">{{ row.visits.toLocaleString() }}</span>
           </div>
         </div>
+
+        <div class="ana__referrers">
+          <p class="ana__section-label">What people searched on Google</p>
+          <template v-if="searchConnected && search">
+            <p class="ana__search-summary">
+              Your site appeared in Google results {{ plural(search.current.impressions, 'time', 'times') }}
+              and was clicked {{ plural(search.current.clicks, 'time', 'times') }}<template v-if="searchClickChange !== null">
+                — {{ trendLabel(searchClickChange).toLowerCase() }} on the period before</template>.
+              Figures run about two days behind.
+            </p>
+            <div v-if="search.queries.length === 0" class="ana__referrers-empty">No searches recorded for this period.</div>
+            <table v-else class="ana__search">
+              <thead>
+                <tr>
+                  <th scope="col">Search</th>
+                  <th scope="col" class="ana__search-num">Clicks</th>
+                  <th scope="col" class="ana__search-num">Times shown</th>
+                  <th scope="col" class="ana__search-num" title="Where your site usually appeared in the results; 1 is the top">Position</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="row in search.queries" :key="row.query">
+                  <th scope="row">{{ row.query }}</th>
+                  <td class="ana__search-num">{{ row.clicks.toLocaleString() }}</td>
+                  <td class="ana__search-num">{{ row.impressions.toLocaleString() }}</td>
+                  <td class="ana__search-num">{{ row.position.toFixed(1) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </template>
+          <div v-else class="ana__pending">
+            <p class="ana__pending-title">Not connected yet</p>
+            <p>The words people type into Google to find you will appear here once Search Console is connected.</p>
+          </div>
+        </div>
       </template>
     </div>
   </DashboardLayout>
@@ -588,4 +653,11 @@ onBeforeUnmount(() => chartInstance?.destroy());
 }
 .ana__pending-title { font-weight: 600; color: var(--color-text); margin-bottom: 0.25rem; }
 .ana__page-path--plain { font-family: var(--font-body); }
+.ana__search-summary { font-size: 0.875rem; line-height: 1.5; color: var(--color-text-secondary, var(--color-text)); margin-bottom: 0.75rem; }
+.ana__search { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+.ana__search th, .ana__search td { padding: 0.5rem 0.25rem; border-bottom: 1px solid var(--color-border); text-align: left; }
+.ana__search thead th { font-size: 0.6875rem; font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em; color: var(--color-text-secondary, var(--color-text)); }
+.ana__search tbody th { font-weight: 500; color: var(--color-text); overflow-wrap: anywhere; }
+.ana__search .ana__search-num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; padding-left: 0.75rem; }
+.ana__periods { flex-wrap: wrap; }
 </style>

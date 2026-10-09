@@ -1,5 +1,5 @@
-import { createSign } from 'node:crypto';
 import { json, requireUser } from '../lib/auth';
+import { dateIn, googleAccessToken, googleCredentials, reportTimeZone } from '../lib/google';
 
 /**
  * Reads the site's Google Analytics 4 property on the dashboard's behalf.
@@ -11,26 +11,40 @@ import { json, requireUser } from '../lib/auth';
  *
  * Env:
  *   GA4_PROPERTY_ID    numeric property ID (not the G-XXXX measurement ID)
- *   GA4_CLIENT_EMAIL   the service account's address
- *   GA4_PRIVATE_KEY    its private key, with newlines as \n
  *   GA4_TIMEZONE       optional; defaults to America/Denver
+ *   …plus the service account's credentials — see ../lib/google
  *
- * Query: ?period=7d|30d|13w
+ * Query: ?period=7d|30d|13w|12m|all
  */
 
-const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const SCOPE = 'https://www.googleapis.com/auth/analytics.readonly';
 
 /** The events the website sends that mean someone tried to get in touch. */
 const LEAD_EVENTS = ['generate_lead', 'contact_click', 'quote_cta_click'];
 
-/** `weeks` periods are charted as weekly totals; a bar a day is noise at that length. */
+/**
+ * Short periods are charted by day, a quarter by week, and anything longer by
+ * calendar month. `months: null` means everything the property holds.
+ */
 const PERIODS = {
-  '7d': { days: 7, weekly: false },
-  '30d': { days: 30, weekly: false },
-  '13w': { days: 91, weekly: true },
+  '7d': { unit: 'day', days: 7 },
+  '30d': { unit: 'day', days: 30 },
+  '13w': { unit: 'week', days: 91 },
+  '12m': { unit: 'month', months: 12 },
+  all: { unit: 'month', months: null },
 } as const;
 type Period = keyof typeof PERIODS;
+
+/** The earliest date GA4 accepts; "all time" simply starts here. */
+const GA4_EPOCH = '2015-08-14';
+
+/** First day of the month `back` months before the one containing `today` (YYYY-MM-DD). */
+function monthStart(today: string, back: number): string {
+  const [y, m] = today.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1 - back, 1)).toISOString().slice(0, 10);
+}
+const dayBefore = (day: string) =>
+  new Date(Date.parse(`${day}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
 
 interface Row {
   dimensionValues?: { value: string }[];
@@ -40,52 +54,20 @@ interface Report {
   rows?: Row[];
 }
 
-let cachedToken: { value: string; expires: number } | null = null;
-
-async function accessToken(clientEmail: string, privateKey: string): Promise<string> {
-  if (cachedToken && cachedToken.expires > Date.now() + 60_000) return cachedToken.value;
-
-  const now = Math.floor(Date.now() / 1000);
-  const part = (o: unknown) => Buffer.from(JSON.stringify(o)).toString('base64url');
-  const unsigned = `${part({ alg: 'RS256', typ: 'JWT' })}.${part({
-    iss: clientEmail,
-    scope: SCOPE,
-    aud: TOKEN_URL,
-    iat: now,
-    exp: now + 3600,
-  })}`;
-  const signature = createSign('RSA-SHA256').update(unsigned).sign(privateKey, 'base64url');
-
-  const res = await fetch(TOKEN_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-      assertion: `${unsigned}.${signature}`,
-    }),
-  });
-  if (!res.ok) throw new Error(`Google sign-in failed (${res.status})`);
-
-  const data = (await res.json()) as { access_token: string; expires_in: number };
-  cachedToken = { value: data.access_token, expires: Date.now() + data.expires_in * 1000 };
-  return cachedToken.value;
-}
-
 const num = (row: Row | undefined, i: number) => Number(row?.metricValues?.[i]?.value ?? 0) || 0;
 const dim = (row: Row, i: number) => row.dimensionValues?.[i]?.value ?? '';
 
 /**
  * With two date ranges GA4 appends a `dateRange` dimension to every row,
  * always last, valued `date_range_0` (current) or `date_range_1` (previous).
+ * With one range it adds nothing, and every row is the current period.
  */
-const inRange = (rows: Row[] | undefined, index: 0 | 1) =>
-  (rows ?? []).filter((r) => r.dimensionValues?.at(-1)?.value === `date_range_${index}`);
-
-/** YYYY-MM-DD for `daysAgo` days before today, in the property's timezone. */
-function dateIn(timeZone: string, daysAgo: number): string {
-  const d = new Date(Date.now() - daysAgo * 86_400_000);
-  return new Intl.DateTimeFormat('en-CA', { timeZone }).format(d);
-}
+const inRange = (rows: Row[] | undefined, index: 0 | 1, compared: boolean) =>
+  compared
+    ? (rows ?? []).filter((r) => r.dimensionValues?.at(-1)?.value === `date_range_${index}`)
+    : index === 0
+      ? rows ?? []
+      : [];
 
 export async function handler(event: {
   headers: Record<string, string>;
@@ -95,20 +77,37 @@ export async function handler(event: {
   if ('response' in auth) return auth.response;
 
   const propertyId = process.env.GA4_PROPERTY_ID;
-  const clientEmail = process.env.GA4_CLIENT_EMAIL;
-  const privateKey = process.env.GA4_PRIVATE_KEY?.replace(/\\n/g, '\n');
-  if (!propertyId || !clientEmail || !privateKey) {
+  const credentials = googleCredentials();
+  if (!propertyId || !credentials) {
     return json(200, { configured: false });
   }
 
   const requested = event.queryStringParameters?.period ?? '30d';
   const period: Period = requested in PERIODS ? (requested as Period) : '30d';
-  const { days, weekly } = PERIODS[period];
-  const timeZone = process.env.GA4_TIMEZONE || 'America/Denver';
+  const spec = PERIODS[period];
+  const timeZone = reportTimeZone();
+  const today = dateIn(timeZone);
 
-  const ago = (n: number) => (n === 0 ? 'today' : `${n}daysAgo`);
-  const current = { startDate: ago(days - 1), endDate: 'today' };
-  const previous = { startDate: ago(days * 2 - 1), endDate: ago(days) };
+  // The current range, and the equal-length one before it to compare against.
+  // "All time" has nothing before it.
+  let current: { startDate: string; endDate: string };
+  let previous: { startDate: string; endDate: string } | null;
+  if (spec.unit === 'month') {
+    if (spec.months === null) {
+      current = { startDate: GA4_EPOCH, endDate: 'today' };
+      previous = null;
+    } else {
+      const start = monthStart(today, spec.months - 1);
+      current = { startDate: start, endDate: 'today' };
+      previous = { startDate: monthStart(today, spec.months * 2 - 1), endDate: dayBefore(start) };
+    }
+  } else {
+    const ago = (n: number) => (n === 0 ? 'today' : `${n}daysAgo`);
+    current = { startDate: ago(spec.days - 1), endDate: 'today' };
+    previous = { startDate: ago(spec.days * 2 - 1), endDate: ago(spec.days) };
+  }
+  const compared = previous !== null;
+  const ranges = previous ? [current, previous] : [current];
 
   /*
     Everything is counted in ENGAGED sessions: visits that lasted ten seconds,
@@ -131,11 +130,16 @@ export async function handler(event: {
   const batchA = [
     // 0 — totals, this period against the one before it
     {
-      dateRanges: [current, previous],
+      dateRanges: ranges,
       metrics: [visits, { name: 'sessions' }, { name: 'userEngagementDuration' }],
     },
-    // 1 — engaged visits per day
-    { dateRanges: [current], dimensions: [{ name: 'date' }], metrics: [visits], limit: 100 },
+    // 1 — engaged visits over time
+    {
+      dateRanges: [current],
+      dimensions: [{ name: spec.unit === 'month' ? 'yearMonth' : 'date' }],
+      metrics: [visits],
+      limit: 250,
+    },
     // 2 — pages people actually read
     { dateRanges: [current], dimensions: [{ name: 'pagePath' }], metrics: [visits], orderBys: byVisits, limit: 40 },
     // 3 — where engaged visits came from
@@ -148,7 +152,7 @@ export async function handler(event: {
     },
     // 4 — enquiries, by the page they were sent from (contact vs. employment)
     {
-      dateRanges: [current, previous],
+      dateRanges: ranges,
       dimensions: [{ name: 'eventName' }, { name: 'pagePath' }],
       metrics: [{ name: 'eventCount' }],
       dimensionFilter: leadFilter,
@@ -177,7 +181,7 @@ export async function handler(event: {
   ];
 
   try {
-    const token = await accessToken(clientEmail, privateKey);
+    const token = await googleAccessToken(credentials, SCOPE);
     const run = (requests: unknown[]) =>
       fetch(
         `https://analyticsdata.googleapis.com/v1beta/properties/${encodeURIComponent(propertyId)}:batchRunReports`,
@@ -212,8 +216,8 @@ export async function handler(event: {
     const cleanPath = (path: string) => path.split('?')[0].replace(/(.)\/+$/, '$1') || '/';
 
     const totalsFor = (index: 0 | 1) => {
-      const row = inRange(totals?.rows, index)[0];
-      const eventRows = inRange(events?.rows, index);
+      const row = inRange(totals?.rows, index, compared)[0];
+      const eventRows = inRange(events?.rows, index, compared);
       const count = (name: string, onPage?: (path: string) => boolean) =>
         eventRows
           .filter((r) => dim(r, 0) === name && (!onPage || onPage(cleanPath(dim(r, 1)))))
@@ -231,19 +235,36 @@ export async function handler(event: {
       };
     };
 
-    // GA4 omits days with no traffic, which would draw a quiet day as a gap in
-    // the chart instead of as a zero. Every expected day is emitted.
-    const byDate = new Map((series?.rows ?? []).map((r) => [dim(r, 0), num(r, 0)]));
-    const daily = Array.from({ length: days }, (_, i) => {
-      const key = dateIn(timeZone, days - 1 - i);
-      return { key, visits: byDate.get(key.replace(/-/g, '')) ?? 0 };
-    });
-    const points = weekly
-      ? Array.from({ length: days / 7 }, (_, w) => {
-          const week = daily.slice(w * 7, w * 7 + 7);
-          return { key: week[0].key, visits: week.reduce((sum, d) => sum + d.visits, 0) };
-        })
-      : daily;
+    // GA4 omits days and months with no traffic, which would draw a quiet one
+    // as a gap in the chart instead of as a zero. Every expected slot is emitted.
+    const byKey = new Map((series?.rows ?? []).map((r) => [dim(r, 0), num(r, 0)]));
+    let points: { key: string; visits: number }[];
+    if (spec.unit === 'month') {
+      // "All time" starts at the first month that recorded anything.
+      const first = [...byKey.keys()].sort()[0];
+      const monthsBack =
+        spec.months ??
+        (first
+          ? (Number(today.slice(0, 4)) - Number(first.slice(0, 4))) * 12 +
+            (Number(today.slice(5, 7)) - Number(first.slice(4, 6))) + 1
+          : 1);
+      points = Array.from({ length: monthsBack }, (_, i) => {
+        const key = monthStart(today, monthsBack - 1 - i).slice(0, 7);
+        return { key, visits: byKey.get(key.replace('-', '')) ?? 0 };
+      });
+    } else {
+      const daily = Array.from({ length: spec.days }, (_, i) => {
+        const key = dateIn(timeZone, spec.days - 1 - i);
+        return { key, visits: byKey.get(key.replace(/-/g, '')) ?? 0 };
+      });
+      points =
+        spec.unit === 'week'
+          ? Array.from({ length: spec.days / 7 }, (_, w) => {
+              const week = daily.slice(w * 7, w * 7 + 7);
+              return { key: week[0].key, visits: week.reduce((sum, d) => sum + d.visits, 0) };
+            })
+          : daily;
+    }
 
     const mergedPages = new Map<string, number>();
     for (const r of pages?.rows ?? []) {
@@ -259,9 +280,9 @@ export async function handler(event: {
       {
         configured: true,
         period,
-        unit: weekly ? 'week' : 'day',
+        unit: spec.unit,
         current: totalsFor(0),
-        previous: totalsFor(1),
+        previous: compared ? totalsFor(1) : null,
         trackingActive: num(everTracked?.rows?.[0], 0) > 0,
         series: points,
         pages: [...mergedPages]
