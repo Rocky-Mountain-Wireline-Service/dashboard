@@ -6,6 +6,7 @@ import { features } from '@/config/dashboard';
 const DashboardHome = () => import('@/pages/DashboardHome.vue');
 const AnalyticsPage = () => import('@/pages/AnalyticsPage.vue');
 const ContentKitPage = () => import('@/pages/ContentKitPage.vue');
+const SubmissionsPage = () => import('@/pages/SubmissionsPage.vue');
 const SupportPage = () => import('@/pages/SupportPage.vue');
 const BillingPage = () => import('@/pages/BillingPage.vue');
 const NotFound = () => import('@/pages/NotFound.vue');
@@ -13,6 +14,7 @@ const NotFound = () => import('@/pages/NotFound.vue');
 const routes = [
   { path: '/', name: 'Dashboard', component: DashboardHome },
   { path: '/analytics', name: 'Analytics', component: AnalyticsPage },
+  { path: '/submissions', name: 'Submissions', component: SubmissionsPage },
   ...(features.contentKit ? [{ path: '/content-kit', name: 'ContentKit', component: ContentKitPage }] : []),
   { path: '/support', name: 'Support', component: SupportPage },
   ...(features.billing ? [{ path: '/billing', name: 'Billing', component: BillingPage }] : []),

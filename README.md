@@ -19,6 +19,7 @@ pnpm dev           # the app and its server functions, at http://localhost:5173
 |---|---|
 | Overview | Nothing. Links come from `src/config/dashboard.ts`. |
 | Analytics | A Google service account with Viewer access to the GA4 property. |
+| Form Submissions | `TURSO_CONFIG`, and the public site set up to save submissions (see below). |
 | Contact & Support | A Resend API key and a verified sending domain. |
 | Billing | A Stripe key and the customer ID, with the customer portal switched on in Stripe. `TURSO_CONFIG` for offline payments. |
 | Content Kit | Hidden while `contentKit.enabled` is `false` in the config. |
@@ -51,6 +52,14 @@ The "What people searched on Google" section uses the same service account. Two 
 2. In Search Console → Settings → Users and permissions, add the service account's email as a user (Restricted is enough) on the rmws.com property.
 
 No new variables are needed; the property is found by the client's domain. Set `GSC_SITE_URL` only to force a particular one. Search Console keeps sixteen months of data and runs about two days behind.
+
+### Form submissions
+
+The public site saves each contact form and job application to the agency database as well as emailing it; this page lists them. A submission can be marked New, In progress, Done or Archived, given private notes, exported with the rest to CSV, or deleted. Résumés are stored with the submission and downloaded from here.
+
+- Tables: `db/form-submissions.sql`, applied with `pnpm db:migrate` (additive; safe to re-run).
+- The public site needs `TURSO_CONFIG` and `FORMS_CLIENT_ID` (this dashboard's `clientId`) in its own Netlify environment. Without them it emails only and nothing appears here.
+- Which inbox a form lands in comes from its name: anything with "employ", "applic", "career" or "job" is a job application; "contact", "sales", "inquiry" or "quote" is a sales contact.
 
 ### Offline payments
 

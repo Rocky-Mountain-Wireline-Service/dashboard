@@ -8,7 +8,8 @@
     "dev": "vite",
     "build": "pnpm typecheck && vite build",
     "preview": "vite preview",
-    "typecheck": "vue-tsc -b && tsc -p netlify/tsconfig.json"
+    "typecheck": "vue-tsc -b && tsc -p netlify/tsconfig.json",
+    "db:migrate": "node scripts/migrate.mjs"
   },
   "dependencies": {
     "@auth0/auth0-vue": "^2.3.3",

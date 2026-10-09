@@ -1,4 +1,6 @@
-import { createClient, type Client } from '@libsql/client';
+// The /web build talks HTTP only, so there is no native binary for the function
+// bundler to trip over.
+import { createClient, type Client } from '@libsql/client/web';
 
 /**
  * The agency database. It holds every client's records, so anything that
