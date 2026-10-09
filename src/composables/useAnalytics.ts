@@ -45,7 +45,14 @@ export function useAnalytics() {
     message.value = '';
     try {
       const res = await api(`analytics-proxy?period=${period}`);
-      const data = await res.json().catch(() => ({}));
+      const data = await res.json().catch(() => null);
+
+      // Anything that is not JSON means the request never reached the function
+      // at all. Treating that as a report left the page on its loading skeleton
+      // forever, with nothing to say what was wrong.
+      if (!data || typeof data !== 'object') {
+        throw new Error('The analytics service is not responding.');
+      }
 
       if (data.configured === false) {
         message.value = data.error ?? '';
@@ -53,6 +60,9 @@ export function useAnalytics() {
         return;
       }
       if (!res.ok || data.error) throw new Error(data.error || `Request failed (${res.status})`);
+      if (!data.current || !Array.isArray(data.series)) {
+        throw new Error('Analytics returned something unexpected.');
+      }
 
       report.value = data as AnalyticsReport;
       state.value = 'ready';

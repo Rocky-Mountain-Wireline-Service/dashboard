@@ -8,10 +8,10 @@ Vite, Vue 3, TypeScript, Tailwind CSS 4, Pinia, Chart.js, Netlify Functions.
 
 ```
 pnpm install
-netlify dev        # serves the app and the functions together
+pnpm dev           # the app and its server functions, at http://localhost:5173
 ```
 
-`pnpm dev` serves the app alone; every data call will fail without the functions. `pnpm build` type-checks the app and the functions, then builds.
+`pnpm dev` runs the Netlify functions inside Vite, reading `.env`, so nothing else needs to be running. `pnpm build` type-checks the app and the functions, then builds.
 
 ## What is in it
 
