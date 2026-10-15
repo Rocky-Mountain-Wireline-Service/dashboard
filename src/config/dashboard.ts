@@ -5,6 +5,7 @@ const config: DashboardConfig = {
   "clientName": "Rocky Mountain Wireline Service",
   "clientDomain": "rmws.com",
   "clientEmail": "theron.chepko@rmws.com",
+  "logo": "/brand-logo.png",
   "enabledWidgets": [
     "links",
     "siteAnalytics"

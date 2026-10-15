@@ -2,7 +2,7 @@ import type { Client } from '@libsql/client/web';
 import { googleAccessToken, googleCredentials, reportTimeZone } from './google';
 import { cleanPath, mergePaths, servicesFrom } from './paths';
 import config from '../../src/config/dashboard';
-import { latestLighthouse, type LighthouseCheck } from './lighthouse';
+import { firstLighthouse, type LighthouseCheck } from './lighthouse';
 
 /**
  * The monthly report: a snapshot of one finished calendar month.
@@ -52,9 +52,11 @@ export interface MonthlyReport {
     queries: { query: string; clicks: number; impressions: number; position: number }[];
   } | null;
   /**
-   * The Lighthouse test taken just after the month ended (on the 2nd). It
-   * measures the site as it stood at the end of the month; there is no way to
-   * test a past date, so months before the first test have none.
+   * The first Lighthouse test taken during the month — normally the scheduled
+   * one on the 2nd. Each month therefore shows the site as it stood going into
+   * that month, so a site that changes mid-month shows the change in the next
+   * month's report: a clean before and after. There is no way to test a past
+   * date, so months before the first test have none.
    */
   lighthouse: LighthouseCheck | null;
   highlights: string[];
@@ -356,17 +358,13 @@ export async function buildReport(db: Client, month: string): Promise<MonthlyRep
       return null;
     }
   };
-  // The test belongs to the month it follows: anything from the last week of
-  // the month to the end of the first week after.
-  const after = monthBounds(shiftMonth(month, 1));
-  const lighthouseFrom = new Date(Date.parse(`${monthBounds(month).end}T00:00:00Z`) - 6 * 86_400_000).toISOString().slice(0, 10);
-  const lighthouseTo = new Date(Date.parse(`${after.start}T00:00:00Z`) + 6 * 86_400_000).toISOString().slice(0, 10);
+  const { start: lighthouseFrom, end: lighthouseTo } = monthBounds(month);
 
   const [ga, search, forms, lighthouse] = await Promise.all([
     settle('analytics', analytics(month)),
     settle('search', searchConsole(month)),
     inquiries(db, month),
-    settle('lighthouse', latestLighthouse(db, lighthouseFrom, lighthouseTo)),
+    settle('lighthouse', firstLighthouse(db, lighthouseFrom, lighthouseTo)),
   ]);
 
   const base: Omit<MonthlyReport, 'highlights'> = {

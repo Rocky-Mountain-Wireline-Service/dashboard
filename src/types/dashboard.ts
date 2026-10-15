@@ -72,6 +72,13 @@ export interface DashboardConfig {
   clientName: string;
   clientDomain: string;
   clientEmail: string;
+  /**
+   * The client's logo for the sidebar, as a path under public/ (e.g.
+   * "/brand-logo.png"). The full-color version: it sits on a white tile, so a
+   * logo made for light backgrounds reads on the dark sidebar too. Without
+   * one the sidebar shows the first letter of the client's name.
+   */
+  logo?: string;
   enabledWidgets: string[];
   tutorialVideos: TutorialVideo[];
   links: DashboardLink[];

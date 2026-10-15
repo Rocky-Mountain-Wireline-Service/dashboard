@@ -134,13 +134,13 @@ export async function saveLighthouse(db: Client, check: LighthouseCheck): Promis
   });
 }
 
-/** The newest check taken between two dates (YYYY-MM-DD, inclusive), or null. */
-export async function latestLighthouse(db: Client, from: string, to: string): Promise<LighthouseCheck | null> {
+/** The earliest check taken between two dates (YYYY-MM-DD, inclusive), or null. */
+export async function firstLighthouse(db: Client, from: string, to: string): Promise<LighthouseCheck | null> {
   const row = (
     await db.execute({
       sql: `SELECT data FROM site_checks
              WHERE client_id = ? AND kind = 'lighthouse' AND checked_at >= ? AND checked_at < date(?, '+1 day')
-             ORDER BY checked_at DESC LIMIT 1`,
+             ORDER BY checked_at ASC LIMIT 1`,
       args: [config.clientId, from, to],
     })
   ).rows[0];

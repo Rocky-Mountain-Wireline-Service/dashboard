@@ -2,8 +2,9 @@ import { tursoClient } from '../lib/turso';
 import { lighthouseConfigured, runLighthouse, saveLighthouse } from '../lib/lighthouse';
 
 /**
- * Tests the live homepage with Google Lighthouse on the 2nd of each month, so
- * the result is waiting when the monthly report is written on the 3rd.
+ * Tests the live homepage with Google Lighthouse on the 2nd of each month. That
+ * test is the one the month's own report shows (written on the 3rd of the
+ * month after), so each report reflects the site going into its month.
  *
  * Separate from the report on purpose: each test can take most of the time a
  * scheduled function is allowed, and the report has its own work to do.
