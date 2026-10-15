@@ -123,7 +123,7 @@ export async function handler(event: {
 
     Raw visitor counts are not usable for this site. Well over half of its
     sessions are automated — a steady stream from Singapore and from cloud
-    data centres that loads one page and leaves within a second. Counted as
+    data centers that loads one page and leaves within a second. Counted as
     "visitors" they more than doubled every figure and buried the real pattern
     (they also all arrive as "Direct", so they distorted the sources most).
     Engagement is GA4's own test for a person, and it removes nearly all of it.
@@ -158,7 +158,7 @@ export async function handler(event: {
       orderBys: byVisits,
       limit: 15,
     },
-    // 4 — enquiries, by the page they were sent from (contact vs. employment)
+    // 4 — inquiries, by the page they were sent from (contact vs. employment)
     {
       dateRanges: ranges,
       dimensions: [{ name: 'eventName' }, { name: 'pagePath' }],
@@ -190,7 +190,7 @@ export async function handler(event: {
     },
     // 3 — first visit, or someone coming back
     { dateRanges: [current], dimensions: [{ name: 'newVsReturning' }], metrics: [visits] },
-    // 4 — has the site ever sent an enquiry event? Until the rebuilt site is
+    // 4 — has the site ever sent an inquiry event? Until the rebuilt site is
     //     live it has not, and a zero then means "not measured", not "none".
     {
       dateRanges: [{ startDate: '180daysAgo', endDate: 'today' }],

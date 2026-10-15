@@ -18,12 +18,12 @@ const tiles = computed(() => {
   const r = report.value;
   if (!r) return [];
   const t = r.traffic;
-  const e = r.enquiries;
+  const e = r.inquiries;
   return [
     ...(t
       ? [{ label: 'Real visits', value: t.visits.toLocaleString(), note: changeWords(t.visits, t.prevVisits, 'the month before'), dir: changeDirection(t.visits, t.prevVisits) }]
       : []),
-    { label: 'Sales enquiries', value: e.contactForms.toLocaleString(), note: changeWords(e.contactForms, e.prevContactForms, 'the month before'), dir: changeDirection(e.contactForms, e.prevContactForms) },
+    { label: 'Sales inquiries', value: e.contactForms.toLocaleString(), note: changeWords(e.contactForms, e.prevContactForms, 'the month before'), dir: changeDirection(e.contactForms, e.prevContactForms) },
     { label: 'Job applications', value: e.applications.toLocaleString(), note: changeWords(e.applications, e.prevApplications, 'the month before'), dir: changeDirection(e.applications, e.prevApplications) },
     r.search
       ? { label: 'Clicks from Google', value: r.search.clicks.toLocaleString(), note: changeWords(r.search.clicks, r.search.prevClicks, 'the month before'), dir: changeDirection(r.search.clicks, r.search.prevClicks) }

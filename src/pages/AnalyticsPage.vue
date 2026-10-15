@@ -150,7 +150,7 @@ const trafficCards = computed(() => {
   ];
 });
 
-const enquiryCards = computed(() => {
+const inquiryCards = computed(() => {
   if (!report.value) return [];
   const c = report.value.current;
   const card = (label: string, now: number, change: number | null, icon: unknown) => ({
@@ -364,7 +364,7 @@ onBeforeUnmount(() => chartInstance?.destroy());
         <div>
         <p class="ana__section-label">People getting in touch</p>
         <div v-if="report.trackingActive" class="ana__metrics">
-          <div v-for="card in enquiryCards" :key="card.label" class="ana__metric">
+          <div v-for="card in inquiryCards" :key="card.label" class="ana__metric">
             <div class="ana__metric-header">
               <component :is="card.icon" :size="16" class="ana__metric-icon" aria-hidden="true" />
               <span class="ana__metric-label">{{ card.label }}</span>
@@ -696,7 +696,7 @@ onBeforeUnmount(() => chartInstance?.destroy());
 .ana__grid-full { grid-column: 1 / -1; }
 
 @media (min-width: 1200px) {
-  /* Four traffic cards beside three enquiry cards, in proportion. */
+  /* Four traffic cards beside three inquiry cards, in proportion. */
   .ana__groups { display: grid; grid-template-columns: 4fr 3fr; gap: 0 2rem; align-items: start; }
   .ana__grid-wide { grid-column: span 2; }
 }

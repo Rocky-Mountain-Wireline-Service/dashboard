@@ -49,11 +49,11 @@ const trafficTiles = computed<Tile[]>(() => {
   ];
 });
 
-const enquiryTiles = computed<Tile[]>(() => {
-  const e = report.value?.enquiries;
+const inquiryTiles = computed<Tile[]>(() => {
+  const e = report.value?.inquiries;
   if (!e) return [];
   return [
-    { label: 'Sales enquiries', value: e.contactForms.toLocaleString(), note: changeWords(e.contactForms, e.prevContactForms, 'the month before'), dir: changeDirection(e.contactForms, e.prevContactForms) },
+    { label: 'Sales inquiries', value: e.contactForms.toLocaleString(), note: changeWords(e.contactForms, e.prevContactForms, 'the month before'), dir: changeDirection(e.contactForms, e.prevContactForms) },
     { label: 'Job applications', value: e.applications.toLocaleString(), note: changeWords(e.applications, e.prevApplications, 'the month before'), dir: changeDirection(e.applications, e.prevApplications) },
     ...(e.phoneEmailTaps !== null ? [{ label: 'Phone & email taps', value: e.phoneEmailTaps.toLocaleString() }] : []),
     { label: 'Still marked New', value: e.stillNew.toLocaleString(), note: e.stillNew ? 'in Form Submissions' : 'all picked up' },
@@ -164,7 +164,7 @@ onBeforeUnmount(() => chart?.destroy());
         <section class="rep__section">
           <h3 class="rep__h">People getting in touch</h3>
           <div class="rep__tiles">
-            <div v-for="tile in enquiryTiles" :key="tile.label" class="rep__tile">
+            <div v-for="tile in inquiryTiles" :key="tile.label" class="rep__tile">
               <span class="rep__tile-label">{{ tile.label }}</span>
               <span class="rep__tile-value">{{ tile.value }}</span>
               <span v-if="tile.note" class="rep__tile-note" :class="tile.dir && `rep__tile-note--${tile.dir}`">{{ tile.note }}</span>

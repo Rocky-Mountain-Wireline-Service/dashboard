@@ -11,7 +11,7 @@ import config from '../../src/config/dashboard';
  * and "what did September look like" should have one answer.
  *
  * Every source is optional. A report without Search Console simply has no
- * search section; one without Google Analytics still counts enquiries from the
+ * search section; one without Google Analytics still counts inquiries from the
  * submissions inbox.
  */
 
@@ -29,7 +29,7 @@ export interface MonthlyReport {
   } | null;
   /** Real visits per day of the month. */
   series: { day: string; visits: number }[];
-  enquiries: {
+  inquiries: {
     contactForms: number;
     applications: number;
     prevContactForms: number;
@@ -260,7 +260,7 @@ async function searchConsole(month: string) {
 
 // ─── Submissions inbox ──────────────────────────────────────────────────────
 
-async function enquiries(db: Client, month: string) {
+async function inquiries(db: Client, month: string) {
   const count = async (m: string) => {
     const from = localMidnightUtc(monthBounds(m).start);
     const to = localMidnightUtc(monthBounds(shiftMonth(m, 1)).start);
@@ -307,10 +307,10 @@ function highlights(r: Omit<MonthlyReport, 'highlights'>, monthName: string): st
     out.push(`${plural(t.visits, 'real visit', 'real visits')} in ${monthName}${comparisons.length ? `, ${comparisons.join(' and ')}` : ''}.`);
   }
 
-  const e = r.enquiries;
+  const e = r.inquiries;
   const sent = e.contactForms + e.applications;
   if (sent) {
-    let line = `${plural(e.contactForms, 'sales enquiry', 'sales enquiries')} and ${plural(e.applications, 'job application', 'job applications')} came in through the website.`;
+    let line = `${plural(e.contactForms, 'sales inquiry', 'sales inquiries')} and ${plural(e.applications, 'job application', 'job applications')} came in through the website.`;
     if (e.stillNew) line += ` ${e.stillNew === 1 ? 'One is' : `${e.stillNew} are`} still marked New.`;
     out.push(line);
   } else {
@@ -347,7 +347,7 @@ export async function buildReport(db: Client, month: string): Promise<MonthlyRep
   const [ga, search, forms] = await Promise.all([
     settle('analytics', analytics(month)),
     settle('search', searchConsole(month)),
-    enquiries(db, month),
+    inquiries(db, month),
   ]);
 
   const base: Omit<MonthlyReport, 'highlights'> = {
@@ -355,7 +355,7 @@ export async function buildReport(db: Client, month: string): Promise<MonthlyRep
     generatedAt: new Date().toISOString(),
     traffic: ga?.traffic ?? null,
     series: ga?.series ?? [],
-    enquiries: {
+    inquiries: {
       contactForms: forms.now.contact,
       applications: forms.now.application,
       prevContactForms: forms.before.contact,

@@ -28,7 +28,7 @@ export interface AnalyticsReport {
   current: Totals;
   /** Null for "all time", which has nothing before it. */
   previous: Totals | null;
-  /** False until the site has sent its first enquiry event. */
+  /** False until the site has sent its first inquiry event. */
   trackingActive: boolean;
   series: { key: string; visits: number }[];
   pages: { path: string; visits: number }[];

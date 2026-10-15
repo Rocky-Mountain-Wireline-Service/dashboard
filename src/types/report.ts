@@ -15,7 +15,7 @@ export interface MonthlyReport {
     returningShare: number | null;
   } | null;
   series: { day: string; visits: number }[];
-  enquiries: {
+  inquiries: {
     contactForms: number;
     applications: number;
     prevContactForms: number;

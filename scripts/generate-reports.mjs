@@ -31,7 +31,7 @@ try {
   for (const month of months) {
     const report = await buildReport(db, month);
     const t = report.traffic;
-    const e = report.enquiries;
+    const e = report.inquiries;
     console.log(
       `${month}: ${t ? `${t.visits} real visits (${t.prevVisits} the month before)` : 'no analytics'}, ` +
         `${e.contactForms} contact, ${e.applications} applications, search ${report.search ? 'yes' : 'no'}`

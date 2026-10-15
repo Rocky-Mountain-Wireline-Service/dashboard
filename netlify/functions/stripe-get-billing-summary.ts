@@ -216,7 +216,7 @@ export async function handler(event: { headers: Record<string, string> }) {
     const openInvoices = { data: newestFirst(perCustomer.flatMap(([, , o]) => o.data)) };
     const paidInvoices = { data: newestFirst(perCustomer.flatMap(([, , , p]) => p.data)).slice(0, 10) };
 
-    // The newest subscription is not necessarily the current one: a cancelled
+    // The newest subscription is not necessarily the current one: a canceled
     // plan that was later replaced would otherwise hide the plan now running.
     const sub =
       subscriptions.data.find((s) => LIVE.includes(s.status)) ?? subscriptions.data[0] ?? null;

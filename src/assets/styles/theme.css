@@ -13,7 +13,7 @@
      in dark mode, which is unreadable on a red that stays red. */
   --color-on-primary: #ffffff;
   --color-border: #dfdce0;
-  /* Trend colours, dark enough to read as small text on the card surface. */
+  /* Trend colors, dark enough to read as small text on the card surface. */
   --color-up: #15803d;
   --color-down: #b91c1c;
   --color-warn: #92400e;

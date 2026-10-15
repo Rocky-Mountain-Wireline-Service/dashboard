@@ -410,7 +410,7 @@ onMounted(fetchBillingSummary);
   font-weight: 600;
   padding: 0.25rem 0.625rem;
   border-radius: 999px;
-  /* Any status without its own colour reads as "needs attention". */
+  /* Any status without its own color reads as "needs attention". */
   background-color: rgba(245, 158, 11, 0.14);
   color: var(--color-warn);
 }

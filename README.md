@@ -41,7 +41,7 @@ Until these are set the Analytics page says it is being connected rather than sh
 
 ### What the figures mean
 
-Everything is counted in **engaged visits**: sessions that lasted ten seconds, opened a second page, or got in touch. Raw visitor counts are not shown, because well over half of this site's sessions are automated (a steady stream from Singapore and from cloud data centres that loads one page and leaves). The page states how many hits were left out.
+Everything is counted in **engaged visits**: sessions that lasted ten seconds, opened a second page, or got in touch. Raw visitor counts are not shown, because well over half of this site's sessions are automated (a steady stream from Singapore and from cloud data centers that loads one page and leaves). The page states how many hits were left out.
 
 The "People getting in touch" figures come from events the rebuilt public site sends: `generate_lead` (a form sent; counted as a job application when sent from `/employment`, otherwise as a contact form) and `contact_click` (a phone number or email address tapped). Until the first of these arrives, the section says it is not being counted yet rather than showing zeros.
 
@@ -60,7 +60,7 @@ One snapshot per calendar month, kept in the agency database (`site_reports`, fr
 
 - **Written automatically** on the 3rd of each month at 14:00 UTC by the scheduled function `monthly-report`, for the month just ended. It skips a month that already has a report, so a retry never rewrites one the client has seen. Scheduled functions run only on the published production deploy.
 - **Built by hand** with `pnpm reports:generate` (last month), `pnpm reports:generate 2026-09`, or `pnpm reports:generate --last 12`; add `--write` to save. This replaces an existing month.
-- **Contents:** real visits against the month before and the same month a year earlier, enquiries counted from the submissions inbox, top pages, services, cities and sources, Google search terms when Search Console is connected, and three or four plain-English highlights.
+- **Contents:** real visits against the month before and the same month a year earlier, inquiries counted from the submissions inbox, top pages, services, cities and sources, Google search terms when Search Console is connected, and three or four plain-English highlights.
 - **Your own write-up:** a row for the month in the agency `monthly_reports` table with status `published` shows on the report as "From your web team" (its `summary` and `recommendations`). The dashboard only reads that table.
 
 ### Form submissions
