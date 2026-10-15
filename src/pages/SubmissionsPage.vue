@@ -6,6 +6,7 @@ import {
   Inbox, Search, Paperclip, Mail, Phone, Download, Trash2, ArrowLeft, RefreshCw, Loader2, FileDown,
 } from 'lucide-vue-next';
 import { useApi } from '@/composables/useApi';
+import { formatPhone } from '@/lib/format';
 
 type Kind = 'contact' | 'application' | 'other';
 type Status = 'new' | 'in_progress' | 'done' | 'archived';
@@ -361,8 +362,11 @@ function writeCsv(all: Summary[]) {
 
   const lines = all.map((r) =>
     [
-      formatDate(r.createdAt, true), KIND_LABELS[r.kind], STATUS_LABELS[r.status], r.name, r.email, r.phone,
-      ...labels.map((label) => r.fields.find((f) => f.label === label)?.value ?? ''),
+      formatDate(r.createdAt, true), KIND_LABELS[r.kind], STATUS_LABELS[r.status], r.name, r.email, formatPhone(r.phone),
+      ...labels.map((label) => {
+        const value = r.fields.find((f) => f.label === label)?.value ?? '';
+        return phoneDigits(value) ? formatPhone(value) : value;
+      }),
       r.fileCount, r.notes,
     ].map(cell).join(',')
   );
@@ -510,7 +514,7 @@ onMounted(loadList);
                   <Mail :size="16" aria-hidden="true" /> Reply by email
                 </a>
                 <a v-if="detail.phone && phoneDigits(detail.phone)" :href="`tel:${phoneDigits(detail.phone)}`" class="subs__btn">
-                  <Phone :size="16" aria-hidden="true" /> {{ detail.phone }}
+                  <Phone :size="16" aria-hidden="true" /> {{ formatPhone(detail.phone) }}
                 </a>
               </div>
             </header>
@@ -535,7 +539,7 @@ onMounted(loadList);
                 <dt>{{ field.label }}</dt>
                 <dd>
                   <a v-if="isEmail(field.value)" :href="`mailto:${field.value.trim()}`">{{ field.value }}</a>
-                  <a v-else-if="phoneDigits(field.value)" :href="`tel:${phoneDigits(field.value)}`">{{ field.value }}</a>
+                  <a v-else-if="phoneDigits(field.value)" :href="`tel:${phoneDigits(field.value)}`">{{ formatPhone(field.value) }}</a>
                   <template v-else>{{ field.value }}</template>
                 </dd>
               </div>
