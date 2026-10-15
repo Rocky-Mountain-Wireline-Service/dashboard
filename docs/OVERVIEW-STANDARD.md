@@ -1,6 +1,6 @@
-# Client Dashboard Overview — Standard
+# Client Dashboard — Overview and Monthly Reports Standard
 
-The overview is the page a client lands on after signing in. This document is the standard for it across every client dashboard built from `pws-dashboard-template`. It describes what the page must do, how it is laid out, where its data comes from, and how it behaves when a data source is missing.
+The overview is the page a client lands on after signing in; the Monthly Reports page is where each finished month is kept. This document is the standard for both across every client dashboard built from `pws-dashboard-template`. It describes what each page must do, how it is laid out, where its data comes from, and how it behaves when a data source is missing.
 
 The reference implementation is the Rocky Mountain Wireline Service dashboard (repo `Rocky-Mountain-Wireline-Service/dashboard`, branch `sandbox`). File paths below are relative to that repo; copy from it rather than rewriting.
 
@@ -180,7 +180,62 @@ Reference: `src/components/layout/DashboardSidebar.vue` (`.sidebar__logo`).
 
 ---
 
-## 6. Accessibility
+## 6. Monthly Reports page
+
+A report is a **snapshot of one finished calendar month**, written once after the month ends and stored. It is not recalculated when opened: Google keeps revising its figures, and "how did September go" should have one answer that the client can read, print, forward and come back to. The overview shows the newest report (3.4); this page holds every month.
+
+Menu item **Monthly Reports**, route `/reports`, placed directly under Overview.
+
+Reference: `src/pages/ReportsPage.vue`, `src/composables/useReports.ts`, `src/types/report.ts`, `netlify/lib/report.ts`, `netlify/functions/reports.ts`, `netlify/functions/monthly-report.ts`.
+
+### 6.1 How reports are made
+
+| What | When | Where |
+|---|---|---|
+| Lighthouse test of the homepage, phone and computer | 2nd of each month, 14:00 UTC | scheduled function `lighthouse-check` → `site_checks` |
+| Report for the month just ended | 3rd of each month, 14:00 UTC | scheduled function `monthly-report` → `site_reports` |
+
+- **The 3rd, not the 1st:** Google is still settling a month's last days for a day or two, and Search Console runs about two days behind.
+- **Written once:** the scheduled run skips a month that already has a report, so a retry never rewrites one the client has already seen.
+- **Lighthouse belongs to the month it was taken in:** each report shows the *first* test taken during its month (normally the one on the 2nd). A site that changes mid-month therefore shows the change in the next month's report, a clean before and after. A Lighthouse test cannot be run for a past date, so months before the first test have no Lighthouse section.
+- **Scheduled functions run only on the published production deploy.** Locally, use the scripts:
+  - `pnpm reports:generate` (last month), `pnpm reports:generate 2026-09`, `pnpm reports:generate --last 12`; add `--write` to save (this replaces an existing month). Use `--last 12` once when a dashboard is set up, so the client starts with a year of history.
+  - `pnpm lighthouse:check` (add `--write` to save).
+- **Each source is optional.** A failure in one leaves its section out of that month's report rather than losing the month. A report without Google Analytics still counts inquiries from the submissions inbox.
+
+Tables (`db/site-reports.sql`, `db/site-checks.sql`, applied with `pnpm db:migrate`): one row per client per month, `UNIQUE (client_id, month)`, with the whole report as JSON in `data` so its shape can grow without a migration.
+
+### 6.2 What a report contains
+
+The shape is `MonthlyReport` in `src/types/report.ts`. On the page, in this order:
+
+1. **Header** — "Monthly website report", the month in large type, "Prepared {date}", and on the newest report "Next report {date}".
+2. **The month in brief** — three to five plain-English sentences, generated when the report is built and stored with it. For example:
+   - "181 real visits in September, up 38% on the month before and up 26% on September last year."
+   - "1 sales inquiry and 20 job applications came in through the website. 18 are still marked New."
+   - "Plug and Abandonment was the service people looked at most."
+   - "On a phone the homepage scored 97 out of 100 for speed in Google's test: fast."
+3. **From your web team** — only when the agency has published its own write-up (6.3).
+4. **People getting in touch** — sales inquiries and job applications against the month before (from the submissions inbox), phone and email taps (only once the site sends that event), and how many of the month's submissions are still marked New.
+5. **Visits** — real visits against the month before and against the same month a year earlier, average time per visit, share on a phone, share coming back; a one-line note of how many automated hits were left out; a daily bar chart.
+6. **Speed and quality** — the Lighthouse test: four score rings per device (Speed, Accessibility, Best practices, Search basics) in Lighthouse's bands, then three measurements in plain words — "Main content appears", "Layout stays steady", "Page responds to taps" — each rated Good / Needs work / Poor by Google's thresholds.
+7. **Ranked lists**, in a responsive grid — most visited pages, services people looked at (service detail pages, named as a person would say them), where visitors were (towns and cities), how people found the site (sources named in plain words via `src/lib/sources.ts`, the long tail grouped as "Everything else").
+8. **Google search** — impressions, clicks, usual position and the top searches, when Search Console is connected.
+
+Counting rules are the same as the overview's (4.2 and 4.3): real visits are GA4 engaged sessions; inquiries come from the inbox; months are calendar months in the client's timezone.
+
+### 6.3 The web team's notes
+
+The agency database's own `monthly_reports` table is where the agency writes its summary for a month. When that table has a row for the client and month with `status = 'published'`, its `summary` and `recommendations` appear on the report as **From your web team**. The dashboard only reads that table; it never writes to it. Use it for what the numbers cannot say: work done that month, a known spike that was automated traffic, what comes next.
+
+### 6.4 Page behavior
+
+- A month picker lists every stored month, newest first; the newest opens by default.
+- **Print or save as PDF** prints the report alone on white: no sidebar, no top bar, no picker. A month fits on about two letter pages. The print rules live in `src/assets/styles/main.css` (`@media print`) and the page's own styles.
+- Empty state: "No reports yet — a report for each month is written early the following month and kept here."
+- Width capped at about 1100px: a report is a document and should read like one.
+
+## 7. Accessibility
 
 - One `h2` per card; the page `h1` is the top bar title.
 - Status and loading text in `role="status"`; errors in `role="alert"`.
@@ -190,7 +245,7 @@ Reference: `src/components/layout/DashboardSidebar.vue` (`.sidebar__logo`).
 
 ---
 
-## 7. Checklist for applying this to another dashboard
+## 8. Checklist for applying this to another dashboard
 
 1. Copy `src/assets/styles/theme.css` token changes and the `.card` block in `main.css`; adjust brand colors and the shadow tint.
 2. Copy `src/composables/useOverview.ts`, `src/components/overview/*`, `src/components/widgets/MonthlyReportWidget.vue`, `src/composables/useReports.ts`, `src/types/report.ts`, and `src/pages/DashboardHome.vue`.
@@ -200,3 +255,6 @@ Reference: `src/components/layout/DashboardSidebar.vue` (`.sidebar__logo`).
 6. Set `clientName` and `links` in `src/config/dashboard.ts` so the quick actions read well (a Studio link and a live-site link).
 7. Check the page at 390, 768, 1024, 1440 and 1920px in light and dark, with every data source both present and absent.
 8. Remove the template's standalone Links and Analytics widgets from the overview; their content now lives in the greeting and "so far" card.
+9. Monthly reports: copy `netlify/lib/report.ts`, `netlify/lib/lighthouse.ts`, `netlify/lib/paths.ts`, `netlify/lib/google.ts`, the functions `monthly-report`, `lighthouse-check` and `reports`, the scripts `generate-reports.mjs` and `check-lighthouse.mjs`, `src/pages/ReportsPage.vue` and `src/lib/sources.ts`. Add the `/reports` route and menu item.
+10. Run `pnpm db:migrate`, then `pnpm reports:generate --last 12 --write` to give the client a year of history, and `pnpm lighthouse:check --write` for a first speed and quality baseline.
+11. Check a printed report (save as PDF) as well as the page.
