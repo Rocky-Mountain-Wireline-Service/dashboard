@@ -28,6 +28,8 @@ const LEAD_EVENTS = ['generate_lead', 'contact_click', 'quote_cta_click'];
  * calendar month. `months: null` means everything the property holds.
  */
 const PERIODS = {
+  // The current calendar month so far, against the same days of the month before.
+  mtd: { unit: 'day', days: 0 },
   '7d': { unit: 'day', days: 7 },
   '30d': { unit: 'day', days: 30 },
   '13w': { unit: 'week', days: 91 },
@@ -105,6 +107,15 @@ export async function handler(event: {
       current = { startDate: start, endDate: 'today' };
       previous = { startDate: monthStart(today, spec.months * 2 - 1), endDate: dayBefore(start) };
     }
+  } else if (period === 'mtd') {
+    const dayOfMonth = Number(today.slice(8, 10));
+    const start = monthStart(today, 0);
+    const prevStart = monthStart(today, 1);
+    // The same number of days into last month, cut short if last month was shorter.
+    const prevMonthDays = Number(dayBefore(start).slice(8, 10));
+    const prevEnd = `${prevStart.slice(0, 8)}${String(Math.min(dayOfMonth, prevMonthDays)).padStart(2, '0')}`;
+    current = { startDate: start, endDate: 'today' };
+    previous = { startDate: prevStart, endDate: prevEnd };
   } else {
     const ago = (n: number) => (n === 0 ? 'today' : `${n}daysAgo`);
     current = { startDate: ago(spec.days - 1), endDate: 'today' };
@@ -269,8 +280,9 @@ export async function handler(event: {
         return { key, visits: byKey.get(key.replace('-', '')) ?? 0 };
       });
     } else {
-      const daily = Array.from({ length: spec.days }, (_, i) => {
-        const key = dateIn(timeZone, spec.days - 1 - i);
+      const span = period === 'mtd' ? Number(today.slice(8, 10)) : spec.days;
+      const daily = Array.from({ length: span }, (_, i) => {
+        const key = dateIn(timeZone, span - 1 - i);
         return { key, visits: byKey.get(key.replace(/-/g, '')) ?? 0 };
       });
       points =

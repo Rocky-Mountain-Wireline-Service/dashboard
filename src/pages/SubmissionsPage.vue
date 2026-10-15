@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue';
+import { useRoute } from 'vue-router';
 import DashboardLayout from '@/components/layout/DashboardLayout.vue';
 import {
   Inbox, Search, Paperclip, Mail, Phone, Download, Trash2, ArrowLeft, RefreshCw, Loader2, FileDown,
@@ -54,8 +55,16 @@ const total = ref(0);
 const loadingMore = ref(false);
 const counts = ref<{ kind: Kind; status: Status; n: number }[]>([]);
 
-const kind = ref<Kind | 'all'>('all');
-const status = ref<Status | 'open' | 'all'>('open');
+// The overview links straight to "new sales inquiries" and the like.
+const route = useRoute();
+const kind = ref<Kind | 'all'>(
+  ['contact', 'application', 'other'].includes(String(route.query.kind)) ? (route.query.kind as Kind) : 'all'
+);
+const status = ref<Status | 'open' | 'all'>(
+  ['new', 'in_progress', 'done', 'archived', 'all'].includes(String(route.query.status))
+    ? (route.query.status as Status | 'all')
+    : 'open'
+);
 const search = ref('');
 
 function filterParams(): URLSearchParams {

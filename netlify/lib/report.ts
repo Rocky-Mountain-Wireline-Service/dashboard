@@ -85,7 +85,7 @@ export function lastCompleteMonth(now = new Date()): string {
  * stores. A month of submissions is counted in Colorado time, not UTC, or a
  * Friday-evening application would land in the next month.
  */
-function localMidnightUtc(day: string): string {
+export function localMidnightUtc(day: string): string {
   const [y, m, d] = day.split('-').map(Number);
   const guess = Date.UTC(y, m - 1, d);
   const parts = Object.fromEntries(

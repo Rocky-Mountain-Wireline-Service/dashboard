@@ -21,6 +21,7 @@ const chartCanvas = ref<HTMLCanvasElement | null>(null);
 let chartInstance: Chart | null = null;
 
 const PERIOD_LABELS: Record<Period, string> = {
+  mtd: 'This month',
   '7d': 'Last 7 days',
   '30d': 'Last 30 days',
   '13w': 'Last 13 weeks',
@@ -28,6 +29,7 @@ const PERIOD_LABELS: Record<Period, string> = {
   all: 'All time',
 };
 const PERIOD_WORDS: Record<Period, string> = {
+  mtd: 'so far this month',
   '7d': 'in the last 7 days',
   '30d': 'in the last 30 days',
   '13w': 'in the last 13 weeks',
@@ -35,6 +37,7 @@ const PERIOD_WORDS: Record<Period, string> = {
   all: 'since records began',
 };
 const PREV_PERIOD_WORDS: Record<Period, string> = {
+  mtd: 'the same days last month',
   '7d': 'the 7 days before',
   '30d': 'the 30 days before',
   '13w': 'the 13 weeks before',

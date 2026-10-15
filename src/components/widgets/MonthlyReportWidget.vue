@@ -88,16 +88,16 @@ onMounted(() => load());
 
 <style scoped>
 .report-card {
-  grid-column: 1 / -1;
   background-color: var(--color-surface);
   border: 1px solid var(--color-border);
   border-top: 3px solid var(--color-primary);
-  border-radius: var(--border-radius);
+  border-radius: calc(var(--border-radius) * 1.5);
+  box-shadow: var(--shadow-card);
   padding: 1.25rem 1.5rem;
 }
 .report-card__head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 0.5rem 1rem; margin-bottom: 1rem; }
-.report-card__title { display: flex; align-items: center; gap: 0.5rem; font-size: 1.125rem; font-family: var(--font-heading); color: var(--color-text); }
-.report-card__link { font-size: 0.875rem; font-weight: 500; color: var(--color-primary); }
+.report-card__title { display: flex; align-items: center; gap: 0.5rem; font-size: 1rem; font-family: var(--font-heading); color: var(--color-text); }
+.report-card__link { font-size: 0.8125rem; font-weight: 600; color: var(--color-primary); }
 .report-card__link:hover { text-decoration: underline; }
 
 .report-card__status { display: flex; align-items: center; gap: 0.5rem; font-size: 0.875rem; color: var(--color-text-secondary, var(--color-text)); }
@@ -105,7 +105,7 @@ onMounted(() => load());
 @keyframes report-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .report-card__spin { animation: none; } }
 
-.report-card__tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 0.75rem; margin-bottom: 1rem; }
+.report-card__tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0.75rem; margin-bottom: 1rem; }
 .report-card__tile {
   display: flex; flex-direction: column; gap: 0.15rem; padding: 0.875rem 1rem;
   background-color: var(--color-bg); border: 1px solid var(--color-border); border-radius: var(--border-radius);
@@ -120,6 +120,13 @@ onMounted(() => load());
 .report-card__highlights li { position: relative; padding-left: 1.1rem; font-size: 0.9375rem; line-height: 1.5; color: var(--color-text); }
 .report-card__highlights li::before {
   content: ''; position: absolute; left: 0; top: 0.6em; width: 0.4rem; height: 0.4rem; border-radius: 50%; background-color: var(--color-secondary);
+}
+@media (max-width: 560px) {
+  /* Two across on a phone: four full-width tiles pushed the highlights a screen away. */
+  .report-card { padding: 1.1rem 1rem; }
+  .report-card__tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.5rem; }
+  .report-card__tile { padding: 0.7rem 0.75rem; }
+  .report-card__tile-value { font-size: 1.3rem; }
 }
 .report-card__foot { margin-top: 0.875rem; font-size: 0.75rem; color: var(--color-text-secondary, var(--color-text)); }
 </style>

@@ -7,6 +7,7 @@ import config from '../../src/config/dashboard';
  *
  *   GET                         list, newest first (?kind=&status=&q=&offset=)
  *   GET    ?all=1               the same list unpaged, for an export
+ *   GET    ?summary=1           counts, this month's counts, and the five newest — for the overview
  *   GET    ?id=…                one submission, with its attachments listed
  *   GET    ?file=…              one attachment, as base64
  *   PATCH  { id, status?, notes? }
@@ -111,6 +112,44 @@ export async function handler(event: {
             size: Number(f.size) || 0,
           })),
         },
+      });
+    }
+
+    if (event.httpMethod === 'GET' && query.summary) {
+      // "This month" in Colorado time, as the stored timestamps are UTC.
+      const { localMidnightUtc, monthBounds } = await import('../lib/report');
+      const today = new Intl.DateTimeFormat('en-CA', { timeZone: process.env.GA4_TIMEZONE || 'America/Denver' }).format(new Date());
+      const monthStartUtc = localMidnightUtc(monthBounds(today.slice(0, 7)).start);
+
+      const [counts, month, recent] = await Promise.all([
+        db.execute({
+          sql: 'SELECT kind, status, COUNT(*) AS n FROM form_submissions WHERE client_id = ? GROUP BY kind, status',
+          args: [CLIENT],
+        }),
+        db.execute({
+          sql: `SELECT kind, COUNT(*) AS n FROM form_submissions
+                 WHERE client_id = ? AND created_at >= ? GROUP BY kind`,
+          args: [CLIENT, monthStartUtc],
+        }),
+        db.execute({
+          sql: `SELECT id, kind, name, email, status, created_at FROM form_submissions
+                 WHERE client_id = ? AND status != 'archived'
+                 ORDER BY created_at DESC, id LIMIT 5`,
+          args: [CLIENT],
+        }),
+      ]);
+      return json(200, {
+        configured: true,
+        counts: counts.rows.map((r) => ({ kind: r.kind, status: r.status, n: Number(r.n) || 0 })),
+        thisMonth: Object.fromEntries(month.rows.map((r) => [String(r.kind), Number(r.n) || 0])),
+        recent: recent.rows.map((r) => ({
+          id: r.id,
+          kind: r.kind,
+          name: r.name,
+          email: r.email,
+          status: r.status,
+          createdAt: iso(r.created_at),
+        })),
       });
     }
 

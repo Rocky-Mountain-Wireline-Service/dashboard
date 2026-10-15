@@ -1,7 +1,7 @@
 import { ref } from 'vue';
 import { useApi } from '@/composables/useApi';
 
-export type Period = '7d' | '30d' | '13w' | '12m' | 'all';
+export type Period = 'mtd' | '7d' | '30d' | '13w' | '12m' | 'all';
 
 /**
  * A "visit" throughout is an engaged one: it lasted ten seconds, opened a
