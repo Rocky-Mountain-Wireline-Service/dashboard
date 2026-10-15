@@ -10,7 +10,7 @@ const vite = await createServer({ server: { middlewareMode: true }, appType: 'cu
 try {
   const { tursoClient } = await vite.ssrLoadModule('/netlify/lib/turso.ts');
   const { lighthouseConfigured, lighthouseUrl, runLighthouse, saveLighthouse } = await vite.ssrLoadModule('/netlify/lib/lighthouse.ts');
-  if (!lighthouseConfigured()) throw new Error('PSI_API_KEY is not set in .env');
+  if (!lighthouseConfigured()) throw new Error('Set the Google service account (GA4_CLIENT_EMAIL, GA4_PRIVATE_KEY) or PSI_API_KEY in .env');
 
   console.log(`Testing ${lighthouseUrl()} on mobile and desktop…`);
   const started = Date.now();

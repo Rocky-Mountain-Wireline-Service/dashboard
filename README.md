@@ -67,7 +67,7 @@ One snapshot per calendar month, kept in the agency database (`site_reports`, fr
 
 Google Lighthouse scores for the homepage, mobile and desktop, through the PageSpeed Insights API. They appear in the monthly report ("Speed and quality") and on the overview card.
 
-- Needs `PSI_API_KEY`: a Google Cloud API key with the PageSpeed Insights API enabled (restrict it to that API). Without one Google refuses every request.
+- Uses the analytics service account; the only setup is enabling the **PageSpeed Insights API** in that account's Google Cloud project. (`PSI_API_KEY` can be set instead, but is not needed.)
 - Tested on the 2nd of each month by the scheduled function `lighthouse-check`; the report written on the 3rd picks the result up. Run it by hand with `pnpm lighthouse:check` (add `--write` to save).
 - A test measures the site as it is at that moment and cannot be run for a past date, so reports from before the first test have no Lighthouse section.
 - `LIGHTHOUSE_URL` overrides the page tested.

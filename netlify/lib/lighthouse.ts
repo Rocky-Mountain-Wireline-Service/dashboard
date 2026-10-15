@@ -1,13 +1,17 @@
 import type { Client } from '@libsql/client/web';
 import config from '../../src/config/dashboard';
+import { googleAccessToken, googleCredentials } from './google';
 
 /**
  * Google Lighthouse scores for the live site, through the PageSpeed Insights API.
  *
+ * Signs in as the same Google service account as analytics, so no separate key
+ * is needed — only the PageSpeed Insights API enabled in that account's Cloud
+ * project. Google refuses anonymous requests: the keyless allowance is shared
+ * by everyone and always spent.
+ *
  * Env:
- *   PSI_API_KEY      a Google Cloud API key with the PageSpeed Insights API
- *                    enabled. Without one Google refuses the request: the
- *                    keyless allowance is shared by everyone and always spent.
+ *   PSI_API_KEY      optional; an API key to use instead of the service account
  *   LIGHTHOUSE_URL   optional; the page to test. Defaults to the client's homepage.
  *
  * Only the homepage is tested, on mobile and on desktop. Each test takes Google
@@ -48,14 +52,26 @@ const TIME_LIMIT_MS = 26_000;
 const rate = (value: number, [good, poor]: readonly [number, number]): Rating =>
   value <= good ? 'good' : value <= poor ? 'needs-work' : 'poor';
 
-export const lighthouseConfigured = () => Boolean(process.env.PSI_API_KEY);
+export const lighthouseConfigured = () => Boolean(process.env.PSI_API_KEY || googleCredentials());
 export const lighthouseUrl = () => process.env.LIGHTHOUSE_URL || `https://${config.clientDomain}/`;
 
-async function run(url: string, strategy: Strategy, signal: AbortSignal): Promise<LighthouseResult> {
-  const params = new URLSearchParams({ url, strategy, key: process.env.PSI_API_KEY ?? '' });
-  for (const category of ['performance', 'accessibility', 'best-practices', 'seo']) params.append('category', category);
+/** An API key if one is set; otherwise the service account, which only needs the `openid` scope here. */
+async function authorize(params: URLSearchParams): Promise<Record<string, string>> {
+  if (process.env.PSI_API_KEY) {
+    params.set('key', process.env.PSI_API_KEY);
+    return {};
+  }
+  const credentials = googleCredentials();
+  if (!credentials) throw new Error('No PageSpeed credentials');
+  return { Authorization: `Bearer ${await googleAccessToken(credentials, 'openid')}` };
+}
 
-  const res = await fetch(`https://www.googleapis.com/pagespeedonline/v5/runPagespeed?${params}`, { signal });
+async function run(url: string, strategy: Strategy, signal: AbortSignal): Promise<LighthouseResult> {
+  const params = new URLSearchParams({ url, strategy });
+  for (const category of ['performance', 'accessibility', 'best-practices', 'seo']) params.append('category', category);
+  const headers = await authorize(params);
+
+  const res = await fetch(`https://www.googleapis.com/pagespeedonline/v5/runPagespeed?${params}`, { signal, headers });
   if (!res.ok) throw new Error(`PageSpeed ${strategy} ${res.status}: ${(await res.text()).slice(0, 200)}`);
 
   const data = (await res.json()) as {

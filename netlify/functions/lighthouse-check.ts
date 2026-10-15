@@ -11,7 +11,7 @@ import { lighthouseConfigured, runLighthouse, saveLighthouse } from '../lib/ligh
  */
 export default async () => {
   if (!lighthouseConfigured()) {
-    console.log('Lighthouse check skipped: PSI_API_KEY is not set.');
+    console.log('Lighthouse check skipped: no Google service account or PSI_API_KEY.');
     return new Response('not configured');
   }
   const db = tursoClient();
