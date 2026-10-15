@@ -7,12 +7,14 @@ const DashboardHome = () => import('@/pages/DashboardHome.vue');
 const AnalyticsPage = () => import('@/pages/AnalyticsPage.vue');
 const ContentKitPage = () => import('@/pages/ContentKitPage.vue');
 const SubmissionsPage = () => import('@/pages/SubmissionsPage.vue');
+const ReportsPage = () => import('@/pages/ReportsPage.vue');
 const SupportPage = () => import('@/pages/SupportPage.vue');
 const BillingPage = () => import('@/pages/BillingPage.vue');
 const NotFound = () => import('@/pages/NotFound.vue');
 
 const routes = [
   { path: '/', name: 'Dashboard', component: DashboardHome },
+  { path: '/reports', name: 'Reports', component: ReportsPage },
   { path: '/analytics', name: 'Analytics', component: AnalyticsPage },
   { path: '/submissions', name: 'Submissions', component: SubmissionsPage },
   ...(features.contentKit ? [{ path: '/content-kit', name: 'ContentKit', component: ContentKitPage }] : []),

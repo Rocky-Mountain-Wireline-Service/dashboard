@@ -5,6 +5,7 @@ import AnalyticsWidget from '@/components/widgets/AnalyticsWidget.vue';
 import TutorialsWidget from '@/components/widgets/TutorialsWidget.vue';
 import LinksWidget from '@/components/widgets/LinksWidget.vue';
 import ContentEditorWidget from '@/components/widgets/ContentEditorWidget.vue';
+import MonthlyReportWidget from '@/components/widgets/MonthlyReportWidget.vue';
 import config from '@/config/dashboard';
 
 const widgetMap: Record<string, unknown> = {
@@ -24,6 +25,8 @@ const activeWidgets = computed(() =>
 <template>
   <DashboardLayout page-title="Dashboard">
     <div class="dashboard-grid">
+      <!-- Always first and full width: the one thing to read on arrival. -->
+      <MonthlyReportWidget />
       <component
         v-for="widget in activeWidgets"
         :is="widget.component"

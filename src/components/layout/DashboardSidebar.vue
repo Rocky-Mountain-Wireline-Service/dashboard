@@ -9,6 +9,7 @@ import { useAuth0 } from '@auth0/auth0-vue';
 import {
   LayoutDashboard,
   BarChart3,
+  FileBarChart,
   Inbox,
   ClipboardList,
   MessageSquare,
@@ -45,6 +46,7 @@ interface NavItem { to: string; label: string; icon: unknown }
 // would otherwise be a menu item leading to a placeholder.
 const navItems: NavItem[] = [
   { to: '/', label: 'Overview', icon: LayoutDashboard },
+  { to: '/reports', label: 'Monthly Reports', icon: FileBarChart },
   { to: '/analytics', label: 'Analytics', icon: BarChart3 },
   { to: '/submissions', label: 'Form Submissions', icon: Inbox },
   ...(features.contentKit ? [{ to: '/content-kit', label: 'Content Kit', icon: ClipboardList }] : []),

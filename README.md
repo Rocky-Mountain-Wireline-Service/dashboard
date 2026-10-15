@@ -19,6 +19,7 @@ pnpm dev           # the app and its server functions, at http://localhost:5173
 |---|---|
 | Overview | Nothing. Links come from `src/config/dashboard.ts`. |
 | Analytics | A Google service account with Viewer access to the GA4 property. |
+| Monthly Reports | `TURSO_CONFIG`. Analytics and Search Console fill in their sections when connected. |
 | Form Submissions | `TURSO_CONFIG`, and the public site set up to save submissions (see below). |
 | Contact & Support | A Resend API key and a verified sending domain. |
 | Billing | A Stripe key and the customer ID, with the customer portal switched on in Stripe. `TURSO_CONFIG` for offline payments. |
@@ -52,6 +53,15 @@ The "What people searched on Google" section uses the same service account. Two 
 2. In Search Console → Settings → Users and permissions, add the service account's email as a user (Restricted is enough) on the rmws.com property.
 
 No new variables are needed; the property is found by the client's domain. Set `GSC_SITE_URL` only to force a particular one. Search Console keeps sixteen months of data and runs about two days behind.
+
+### Monthly reports
+
+One snapshot per calendar month, kept in the agency database (`site_reports`, from `db/site-reports.sql`). The overview shows the newest; the Monthly Reports page has every month, and prints or saves as a PDF.
+
+- **Written automatically** on the 3rd of each month at 14:00 UTC by the scheduled function `monthly-report`, for the month just ended. It skips a month that already has a report, so a retry never rewrites one the client has seen. Scheduled functions run only on the published production deploy.
+- **Built by hand** with `pnpm reports:generate` (last month), `pnpm reports:generate 2026-09`, or `pnpm reports:generate --last 12`; add `--write` to save. This replaces an existing month.
+- **Contents:** real visits against the month before and the same month a year earlier, enquiries counted from the submissions inbox, top pages, services, cities and sources, Google search terms when Search Console is connected, and three or four plain-English highlights.
+- **Your own write-up:** a row for the month in the agency `monthly_reports` table with status `published` shows on the report as "From your web team" (its `summary` and `recommendations`). The dashboard only reads that table.
 
 ### Form submissions
 

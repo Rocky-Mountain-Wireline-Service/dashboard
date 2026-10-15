@@ -1,4 +1,5 @@
 import { json, requireUser } from '../lib/auth';
+import { cleanPath, mergePaths, servicesFrom } from '../lib/paths';
 import { dateIn, googleAccessToken, googleCredentials, reportTimeZone } from '../lib/google';
 
 /**
@@ -230,11 +231,6 @@ export async function handler(event: {
     const [totals, series, pages, sources, events] = a.reports ?? [];
     const [states, devices, cities, audience, everTracked] = b.reports ?? [];
 
-    /** `/contact/` and `/contact` are one page; the old site used the first form, the rebuilt one the second. */
-    // Tracking parameters arrive both plain (?fbclid=…) and percent-encoded.
-    const cleanPath = (path: string) =>
-      path.split(/\?|%3F/i)[0].replace(/(.)\/+$/, '$1') || '/';
-
     const totalsFor = (index: 0 | 1) => {
       const row = inRange(totals?.rows, index, totalRanges.length > 1)[0];
       const eventRows = inRange(events?.rows, index, compared);
@@ -286,26 +282,9 @@ export async function handler(event: {
           : daily;
     }
 
-    const mergedPages = new Map<string, number>();
-    for (const r of pages?.rows ?? []) {
-      const path = cleanPath(dim(r, 0));
-      mergedPages.set(path, (mergedPages.get(path) ?? 0) + num(r, 0));
-    }
+    const mergedPages = mergePaths((pages?.rows ?? []).map((r) => ({ path: dim(r, 0), visits: num(r, 0) })));
 
-    // Service pages on their own, named as a person would say them.
-    const services = [...mergedPages]
-      .filter(([path, count]) => /^\/services\/[a-z0-9-]+$/.test(path) && count > 0)
-      .map(([path, count]) => ({
-        path,
-        name: path
-          .split('/')[2]
-          .split('-')
-          .map((w) => (w === 'and' ? w : w.charAt(0).toUpperCase() + w.slice(1)))
-          .join(' '),
-        visits: count,
-      }))
-      .sort((x, y) => y.visits - x.visits)
-      .slice(0, 8);
+    const services = servicesFrom(mergedPages);
 
     const audienceCount = (name: string) =>
       num((audience?.rows ?? []).find((r) => dim(r, 0) === name), 0);
