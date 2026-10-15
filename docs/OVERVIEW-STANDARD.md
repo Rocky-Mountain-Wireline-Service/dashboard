@@ -174,7 +174,7 @@ Tint the shadow with the client's darkest brand color (RMWS uses its sidebar mar
 
 ### Sidebar brand
 
-Show the client's **full-color logo on a white rounded tile** at the top of the sidebar (`config.logo`, a file in `public/`, e.g. `/brand-logo.png` at 2× display size), instead of the template's initial letter. The white tile lets a logo designed for light backgrounds read on the dark sidebar without a reversed version. The client name beside it wraps to two lines before truncating. Fallback when no logo is configured: the initial letter, as before.
+Show the client's **favicon badge** at the top of the sidebar instead of the template's initial letter: their square favicon / app icon (the 180px `apple-touch-icon.png` from the public site), copied into the dashboard's `public/` and set as `config.logo` (e.g. `/brand-badge.png`). It is shown as it is at 44px, so it must be a self-contained mark that reads on the dark sidebar; a wide wordmark logo is too small at that size. The client name beside it wraps to two lines before truncating. Fallback when no badge is configured: the initial letter, as before.
 
 Reference: `src/components/layout/DashboardSidebar.vue` (`.sidebar__logo`).
 
@@ -196,7 +196,7 @@ Reference: `src/components/layout/DashboardSidebar.vue` (`.sidebar__logo`).
 2. Copy `src/composables/useOverview.ts`, `src/components/overview/*`, `src/components/widgets/MonthlyReportWidget.vue`, `src/composables/useReports.ts`, `src/types/report.ts`, and `src/pages/DashboardHome.vue`.
 3. Add the endpoints the cards need (section 4): `form-submissions` (with `?summary=1`), `analytics-proxy` (with `period=mtd`), `reports`, `site-health`. Each must use `requireUser` and filter by `config.clientId`.
 4. Make the submissions page read `?kind=` and `?status=` from the URL.
-5. Add `logo` to the dashboard config and the client's logo file to `public/`; update the sidebar.
+5. Copy the public site's `apple-touch-icon.png` into the dashboard's `public/` (e.g. as `brand-badge.png`), set `logo` in the dashboard config, and update the sidebar.
 6. Set `clientName` and `links` in `src/config/dashboard.ts` so the quick actions read well (a Studio link and a live-site link).
 7. Check the page at 390, 768, 1024, 1440 and 1920px in light and dark, with every data source both present and absent.
 8. Remove the template's standalone Links and Analytics widgets from the overview; their content now lives in the greeting and "so far" card.

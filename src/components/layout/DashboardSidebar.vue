@@ -66,7 +66,7 @@ const navItems: NavItem[] = [
     <!-- Brand header -->
     <div class="sidebar__brand" :class="collapsed ? 'sidebar__brand--collapsed' : ''">
       <div v-if="config.logo" class="sidebar__logo">
-        <img :src="config.logo" :alt="`${config.clientName} logo`" width="120" height="75" />
+        <img :src="config.logo" :alt="`${config.clientName} logo`" width="44" height="44" />
       </div>
       <div
         v-else
@@ -193,21 +193,9 @@ const navItems: NavItem[] = [
   justify-content: center;
 }
 
-/* A white tile, like an app icon: the client's own full-color logo then reads
-   on the dark sidebar without needing a reversed version. */
-.sidebar__logo {
-  display: grid;
-  place-items: center;
-  width: 3.75rem;
-  height: 2.75rem;
-  flex-shrink: 0;
-  padding: 0.25rem 0.35rem;
-  border-radius: 0.5rem;
-  background-color: #ffffff;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
-}
-.sidebar__logo img { width: 100%; height: 100%; object-fit: contain; }
-.sidebar--collapsed .sidebar__logo { width: 2.75rem; height: 2.25rem; padding: 0.2rem; }
+/* The client's favicon badge: a square, self-contained mark, like an app icon. */
+.sidebar__logo { width: 2.75rem; height: 2.75rem; flex-shrink: 0; }
+.sidebar__logo img { width: 100%; height: 100%; object-fit: contain; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.35)); }
 
 .sidebar__avatar {
   width: 2.25rem;
