@@ -25,7 +25,14 @@ const tiles = computed(() => {
       : []),
     { label: 'Sales inquiries', value: e.contactForms.toLocaleString(), note: changeWords(e.contactForms, e.prevContactForms, 'the month before'), dir: changeDirection(e.contactForms, e.prevContactForms) },
     { label: 'Job applications', value: e.applications.toLocaleString(), note: changeWords(e.applications, e.prevApplications, 'the month before'), dir: changeDirection(e.applications, e.prevApplications) },
-    r.search
+    r.lighthouse?.mobile
+      ? {
+          label: 'Phone speed score',
+          value: `${r.lighthouse.mobile.scores.performance}/100`,
+          note: r.lighthouse.mobile.scores.performance >= 90 ? 'Good' : r.lighthouse.mobile.scores.performance >= 50 ? 'Needs work' : 'Poor',
+          dir: (r.lighthouse.mobile.scores.performance >= 90 ? 'up' : r.lighthouse.mobile.scores.performance >= 50 ? 'flat' : 'down') as 'up' | 'flat' | 'down',
+        }
+      : r.search
       ? { label: 'Clicks from Google', value: r.search.clicks.toLocaleString(), note: changeWords(r.search.clicks, r.search.prevClicks, 'the month before'), dir: changeDirection(r.search.clicks, r.search.prevClicks) }
       : t
         ? { label: 'Avg. time per visit', value: formatDuration(t.avgSeconds), note: '', dir: 'flat' as const }

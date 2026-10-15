@@ -2,6 +2,7 @@ import type { Client } from '@libsql/client/web';
 import { googleAccessToken, googleCredentials, reportTimeZone } from './google';
 import { cleanPath, mergePaths, servicesFrom } from './paths';
 import config from '../../src/config/dashboard';
+import { latestLighthouse, type LighthouseCheck } from './lighthouse';
 
 /**
  * The monthly report: a snapshot of one finished calendar month.
@@ -50,6 +51,12 @@ export interface MonthlyReport {
     prevClicks: number;
     queries: { query: string; clicks: number; impressions: number; position: number }[];
   } | null;
+  /**
+   * The Lighthouse test taken just after the month ended (on the 2nd). It
+   * measures the site as it stood at the end of the month; there is no way to
+   * test a past date, so months before the first test have none.
+   */
+  lighthouse: LighthouseCheck | null;
   highlights: string[];
 }
 
@@ -328,7 +335,12 @@ function highlights(r: Omit<MonthlyReport, 'highlights'>, monthName: string): st
   } else if (r.cities[0]) {
     out.push(`Most visits came from around ${r.cities[0].name}, ${r.cities[0].region}.`);
   }
-  return out.slice(0, 4);
+  const mobile = r.lighthouse?.mobile;
+  if (mobile) {
+    const verdict = mobile.scores.performance >= 90 ? 'fast' : mobile.scores.performance >= 50 ? 'reasonably quick' : 'slow';
+    out.push(`On a phone the homepage scored ${mobile.scores.performance} out of 100 for speed in Google's test: ${verdict}.`);
+  }
+  return out.slice(0, 5);
 }
 
 // ─── Build and store ────────────────────────────────────────────────────────
@@ -344,10 +356,17 @@ export async function buildReport(db: Client, month: string): Promise<MonthlyRep
       return null;
     }
   };
-  const [ga, search, forms] = await Promise.all([
+  // The test belongs to the month it follows: anything from the last week of
+  // the month to the end of the first week after.
+  const after = monthBounds(shiftMonth(month, 1));
+  const lighthouseFrom = new Date(Date.parse(`${monthBounds(month).end}T00:00:00Z`) - 6 * 86_400_000).toISOString().slice(0, 10);
+  const lighthouseTo = new Date(Date.parse(`${after.start}T00:00:00Z`) + 6 * 86_400_000).toISOString().slice(0, 10);
+
+  const [ga, search, forms, lighthouse] = await Promise.all([
     settle('analytics', analytics(month)),
     settle('search', searchConsole(month)),
     inquiries(db, month),
+    settle('lighthouse', latestLighthouse(db, lighthouseFrom, lighthouseTo)),
   ]);
 
   const base: Omit<MonthlyReport, 'highlights'> = {
@@ -368,6 +387,7 @@ export async function buildReport(db: Client, month: string): Promise<MonthlyRep
     cities: ga?.cities ?? [],
     sources: ga?.sources ?? [],
     search,
+    lighthouse: lighthouse ?? null,
   };
   const monthName = new Date(`${month}-15T12:00:00Z`).toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' });
   return { ...base, highlights: highlights(base, monthName) };

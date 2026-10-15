@@ -63,6 +63,15 @@ One snapshot per calendar month, kept in the agency database (`site_reports`, fr
 - **Contents:** real visits against the month before and the same month a year earlier, inquiries counted from the submissions inbox, top pages, services, cities and sources, Google search terms when Search Console is connected, and three or four plain-English highlights.
 - **Your own write-up:** a row for the month in the agency `monthly_reports` table with status `published` shows on the report as "From your web team" (its `summary` and `recommendations`). The dashboard only reads that table.
 
+### Lighthouse
+
+Google Lighthouse scores for the homepage, mobile and desktop, through the PageSpeed Insights API. They appear in the monthly report ("Speed and quality") and on the overview card.
+
+- Needs `PSI_API_KEY`: a Google Cloud API key with the PageSpeed Insights API enabled (restrict it to that API). Without one Google refuses every request.
+- Tested on the 2nd of each month by the scheduled function `lighthouse-check`; the report written on the 3rd picks the result up. Run it by hand with `pnpm lighthouse:check` (add `--write` to save).
+- A test measures the site as it is at that moment and cannot be run for a past date, so reports from before the first test have no Lighthouse section.
+- `LIGHTHOUSE_URL` overrides the page tested.
+
 ### Form submissions
 
 The public site saves each contact form and job application to the agency database as well as emailing it; this page lists them. A submission can be marked New, In progress, Done or Archived, given private notes, exported with the rest to CSV, or deleted. Résumés are stored with the submission and downloaded from here.

@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "typecheck": "vue-tsc -b && tsc -p netlify/tsconfig.json",
     "db:migrate": "node scripts/migrate.mjs",
-    "reports:generate": "node scripts/generate-reports.mjs"
+    "reports:generate": "node scripts/generate-reports.mjs",
+    "lighthouse:check": "node scripts/check-lighthouse.mjs"
   },
   "dependencies": {
     "@auth0/auth0-vue": "^2.3.3",

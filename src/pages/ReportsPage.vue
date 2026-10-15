@@ -60,6 +60,31 @@ const inquiryTiles = computed<Tile[]>(() => {
   ];
 });
 
+// ─── Lighthouse ─────────────────────────────────────────────────────────────
+
+const lighthouseRuns = computed(() =>
+  [report.value?.lighthouse?.mobile, report.value?.lighthouse?.desktop].filter(
+    (r): r is NonNullable<typeof r> => Boolean(r)
+  )
+);
+
+const SCORE_LABELS = [
+  ['performance', 'Speed'],
+  ['accessibility', 'Accessibility'],
+  ['bestPractices', 'Best practices'],
+  ['seo', 'Search basics'],
+] as const;
+
+/** Lighthouse's own bands: 90 and up is good, below 50 is poor. */
+const band = (score: number) => (score >= 90 ? 'good' : score >= 50 ? 'needs-work' : 'poor');
+
+const RATING_WORDS = { good: 'Good', 'needs-work': 'Needs work', poor: 'Poor' } as const;
+
+const lighthouseDate = computed(() => {
+  const at = report.value?.lighthouse?.checkedAt;
+  return at ? new Date(at).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : '';
+});
+
 const sources = computed(() => describeSources(report.value?.sources ?? [], 6));
 
 /** Bar widths for a ranked list, relative to its own largest entry. */
@@ -190,6 +215,38 @@ onBeforeUnmount(() => chart?.destroy());
           </div>
         </section>
 
+        <section v-if="lighthouseRuns.length" class="rep__section">
+          <h3 class="rep__h">Speed and quality</h3>
+          <p class="rep__fine rep__fine--lead">
+            Google Lighthouse test of the homepage, taken {{ lighthouseDate }}. Scores are out of 100; 90 and above is good.
+          </p>
+          <div class="rep__lh">
+            <div v-for="run in lighthouseRuns" :key="run.strategy" class="rep__lh-run">
+              <h4 class="rep__h4">{{ run.strategy === 'mobile' ? 'On a phone' : 'On a computer' }}</h4>
+              <ul class="rep__lh-scores">
+                <li v-for="[key, label] in SCORE_LABELS" :key="key" :class="`rep__lh-score rep__lh-score--${band(run.scores[key])}`">
+                  <span class="rep__lh-value">{{ run.scores[key] }}</span>
+                  <span class="rep__lh-label">{{ label }}</span>
+                </li>
+              </ul>
+              <dl class="rep__lh-metrics">
+                <div>
+                  <dt>Main content appears</dt>
+                  <dd>{{ (run.metrics.lcp.value / 1000).toFixed(1) }}s <span :class="`rep__rating rep__rating--${run.metrics.lcp.rating}`">{{ RATING_WORDS[run.metrics.lcp.rating] }}</span></dd>
+                </div>
+                <div>
+                  <dt>Layout stays steady</dt>
+                  <dd>{{ run.metrics.cls.value }} <span :class="`rep__rating rep__rating--${run.metrics.cls.rating}`">{{ RATING_WORDS[run.metrics.cls.rating] }}</span></dd>
+                </div>
+                <div>
+                  <dt>Page responds to taps</dt>
+                  <dd>{{ run.metrics.tbt.value }}ms delay <span :class="`rep__rating rep__rating--${run.metrics.tbt.rating}`">{{ RATING_WORDS[run.metrics.tbt.rating] }}</span></dd>
+                </div>
+              </dl>
+            </div>
+          </div>
+        </section>
+
         <div class="rep__grid">
           <section v-if="report.pages.length" class="rep__section">
             <h3 class="rep__h">Most visited pages</h3>
@@ -307,6 +364,30 @@ onBeforeUnmount(() => chart?.destroy());
 .rep__tile-note--down { color: var(--color-down); }
 
 .rep__chart { height: 180px; margin-top: 1rem; }
+
+.rep__fine--lead { margin: -0.4rem 0 0.9rem; }
+.rep__lh { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 1rem 2.5rem; }
+.rep__lh-run .rep__h4 { margin-top: 0; }
+.rep__lh-scores { list-style: none; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.5rem; }
+.rep__lh-score { display: flex; flex-direction: column; align-items: center; gap: 0.35rem; text-align: center; }
+/* A ring in the band's color: Lighthouse's own way of showing a score. */
+.rep__lh-value {
+  display: grid; place-items: center; width: 3.25rem; height: 3.25rem; border-radius: 50%;
+  border: 4px solid currentColor; font-size: 1.05rem; font-weight: 700; font-variant-numeric: tabular-nums;
+  background-color: var(--color-bg);
+}
+.rep__lh-score--good { color: var(--color-up); }
+.rep__lh-score--needs-work { color: var(--color-warn); }
+.rep__lh-score--poor { color: var(--color-down); }
+.rep__lh-label { font-size: 0.75rem; color: var(--color-text-secondary, var(--color-text)); line-height: 1.25; }
+.rep__lh-metrics { margin-top: 1rem; display: flex; flex-direction: column; gap: 0.4rem; }
+.rep__lh-metrics div { display: flex; justify-content: space-between; gap: 1rem; padding-bottom: 0.4rem; border-bottom: 1px solid var(--color-border); font-size: 0.875rem; }
+.rep__lh-metrics dt { color: var(--color-text-secondary, var(--color-text)); }
+.rep__lh-metrics dd { flex-shrink: 0; color: var(--color-text); font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.rep__rating { margin-left: 0.4rem; font-size: 0.75rem; font-weight: 600; white-space: nowrap; }
+.rep__rating--good { color: var(--color-up); }
+.rep__rating--needs-work { color: var(--color-warn); }
+.rep__rating--poor { color: var(--color-down); }
 
 .rep__grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); gap: 0 2.5rem; }
 .rep__list { list-style: none; display: flex; flex-direction: column; gap: 0.45rem; }
