@@ -1,6 +1,6 @@
 import { createApp } from 'vue';
 import { createPinia } from 'pinia';
-import { createHead } from '@unhead/vue';
+import { createHead } from '@unhead/vue/client';
 import { createAuth0 } from '@auth0/auth0-vue';
 import App from './App.vue';
 import router from './router';
