@@ -14,6 +14,7 @@ import {
   ClipboardList,
   MessageSquare,
   CreditCard,
+  CircleHelp,
   UserCircle,
   LogOut,
   Sun,
@@ -52,6 +53,7 @@ const navItems: NavItem[] = [
   ...(features.contentKit ? [{ to: '/content-kit', label: 'Content Kit', icon: ClipboardList }] : []),
   { to: '/support', label: 'Contact & Support', icon: MessageSquare },
   ...(features.billing ? [{ to: '/billing', label: 'Billing', icon: CreditCard }] : []),
+  { to: '/help', label: 'Help', icon: CircleHelp },
 ];
 </script>
 
