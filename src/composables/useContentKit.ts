@@ -97,9 +97,6 @@ export function useContentKit() {
   const saving = ref<string | null>(null);
   const error = ref<string | null>(null);
 
-  const contentKit = config.contentKit;
-  const enabledSections = contentKit?.sections?.filter(s => s.enabled) ?? [];
-  const requiredSectionIds = enabledSections.map(s => s.id);
 
   async function loadContentKit() {
     loading.value = true;
@@ -107,10 +104,8 @@ export function useContentKit() {
 
     try {
       const token = await getAccessTokenSilently();
-      const res = await fetch(
-        `${PROXY_URL}?clientId=${encodeURIComponent(config.clientId)}`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
+      // The client comes from the dashboard's key on the server, never from the request.
+      const res = await fetch(PROXY_URL, { headers: { Authorization: `Bearer ${token}` } });
 
       if (!res.ok) throw new Error('Failed to load content kit');
 
@@ -161,14 +156,7 @@ export function useContentKit() {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          clientId: config.clientId,
-          section: sectionId,
-          data: formState[sectionId],
-          requiredSections: requiredSectionIds,
-          completionEmailNotify: contentKit?.completionEmailNotify ?? false,
-          clientName: config.clientName,
-        }),
+        body: JSON.stringify({ section: sectionId, data: formState[sectionId] }),
       });
 
       if (!res.ok) throw new Error('Failed to save section');

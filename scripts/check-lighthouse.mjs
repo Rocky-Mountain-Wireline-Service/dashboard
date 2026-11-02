@@ -8,7 +8,7 @@ Object.assign(process.env, loadEnv('development', process.cwd(), ''));
 const vite = await createServer({ server: { middlewareMode: true }, appType: 'custom', logLevel: 'error' });
 
 try {
-  const { tursoClient } = await vite.ssrLoadModule('/netlify/lib/turso.ts');
+  const { pipelineConfigured } = await vite.ssrLoadModule('/netlify/lib/pipeline.ts');
   const { lighthouseConfigured, lighthouseUrl, runLighthouse, saveLighthouse } = await vite.ssrLoadModule('/netlify/lib/lighthouse.ts');
   if (!lighthouseConfigured()) throw new Error('Set the Google service account (GA4_CLIENT_EMAIL, GA4_PRIVATE_KEY) or PSI_API_KEY in .env');
 
@@ -25,9 +25,8 @@ try {
     );
   }
   if (write) {
-    const db = tursoClient();
-    if (!db) throw new Error('TURSO_CONFIG is not set in .env');
-    await saveLighthouse(db, check);
+    if (!pipelineConfigured()) throw new Error('PIPELINE_FUNCTIONS_URL and PIPELINE_DASHBOARD_KEY are not set in .env');
+    await saveLighthouse(check);
     console.log('Saved. The next report built for this month will include it.');
   }
 } finally {

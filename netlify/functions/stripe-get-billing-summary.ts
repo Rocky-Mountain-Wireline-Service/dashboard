@@ -1,7 +1,7 @@
 import type Stripe from 'stripe';
 import { json, requireUser } from '../lib/auth';
 import { billingContext } from '../lib/stripe';
-import { tursoClient } from '../lib/turso';
+import { pipeline, pipelineConfigured } from '../lib/pipeline';
 import config from '../../src/config/dashboard';
 
 interface BillingSummary {
@@ -56,6 +56,28 @@ const dayToUnix = (day: unknown): number | null => {
   return Number.isNaN(ms) ? null : Math.floor(ms / 1000);
 };
 
+/** As the Pipeline's get-offline-invoices returns them. */
+interface OfflineInvoice {
+  id: string;
+  invoiceNumber: string | null;
+  amount: number;
+  status: 'draft' | 'sent' | 'paid' | 'overdue' | 'cancelled';
+  productDescription: string | null;
+  dueDate: string | null;
+  sentDate: string | null;
+  paidDate: string | null;
+  paymentMethod: string | null;
+  pdfUrl: string | null;
+  createdAt: string;
+}
+
+/** As the Pipeline's client-site-data?resource=prepaid returns it. */
+interface PrepaidPlan {
+  amount: number;
+  nextBillingDate: string | null;
+  maintenanceCycle: string | null;
+}
+
 /**
  * Invoices settled outside Stripe — by check or bank transfer — are recorded in
  * the agency database instead. Without them the page shows a client who has
@@ -70,72 +92,56 @@ async function offlineBilling(): Promise<{
   prepaidPlan: BillingSummary['subscription'];
 }> {
   const empty = { paid: [], pending: [], prepaidPlan: null };
-  if (!config.billing?.showOfflineInvoices) return empty;
-  const db = tursoClient();
-  if (!db) return empty;
+  if (!config.billing?.showOfflineInvoices || !pipelineConfigured()) return empty;
 
   try {
-    const [invoices, prepaid] = await Promise.all([
-      db.execute({
-        sql: `SELECT id, invoice_number, amount, status, product_description,
-                     due_date, sent_date, paid_date, payment_method, pdf_url, created_at
-                FROM offline_invoices
-               WHERE client_id = ? AND status IN ('paid', 'sent')
-               ORDER BY COALESCE(paid_date, sent_date, created_at) DESC
-               LIMIT 20`,
-        args: [config.clientId],
-      }),
-      db.execute({
-        sql: `SELECT amount, metadata, created_at FROM billing_events
-               WHERE client_id = ? AND event_type = 'maintenance_prepaid'
-               ORDER BY created_at DESC LIMIT 1`,
-        args: [config.clientId],
-      }),
+    // Through the Pipeline with this dashboard's key, which it accepts only for this client's ID.
+    const [{ invoices }, { prepaid }] = await Promise.all([
+      pipeline<{ invoices: OfflineInvoice[] }>(`get-offline-invoices?clientId=${encodeURIComponent(config.clientId)}`),
+      pipeline<{ prepaid: PrepaidPlan | null }>('client-site-data?resource=prepaid'),
     ]);
 
     const paid: BillingSummary['recentPayments'] = [];
     const pending: BillingSummary['pendingCharges'] = [];
-    for (const row of invoices.rows) {
+    const shown = invoices
+      // Drafts aren't sent yet and cancelled ones aren't owed. Overdue is sent and unpaid.
+      .filter((inv) => inv.status === 'paid' || inv.status === 'sent' || inv.status === 'overdue')
+      .sort((a, b) => (b.paidDate ?? b.sentDate ?? b.createdAt).localeCompare(a.paidDate ?? a.sentDate ?? a.createdAt))
+      .slice(0, 20);
+    for (const inv of shown) {
       const base = {
-        id: `offline-${row.id}`,
-        number: (row.invoice_number as string) ?? null,
-        amount: Number(row.amount) || 0,
+        id: `offline-${inv.id}`,
+        number: inv.invoiceNumber ?? null,
+        amount: Number(inv.amount) || 0,
         currency: 'usd',
-        description: (row.product_description as string) ?? null,
-        created: dayToUnix(row.sent_date) ?? dayToUnix(row.created_at) ?? 0,
+        description: inv.productDescription ?? null,
+        created: dayToUnix(inv.sentDate) ?? dayToUnix(inv.createdAt) ?? 0,
         hostedInvoiceUrl: null,
       };
-      if (row.status === 'paid') {
+      if (inv.status === 'paid') {
         paid.push({
           ...base,
-          paidAt: dayToUnix(row.paid_date),
-          invoicePdf: (row.pdf_url as string) ?? null,
-          method: (row.payment_method as string) ?? null,
+          paidAt: dayToUnix(inv.paidDate),
+          invoicePdf: inv.pdfUrl ?? null,
+          method: inv.paymentMethod ?? null,
         });
       } else {
-        pending.push({ ...base, dueDate: dayToUnix(row.due_date), offline: true });
+        pending.push({ ...base, dueDate: dayToUnix(inv.dueDate), offline: true });
       }
     }
 
     let prepaidPlan: BillingSummary['subscription'] = null;
-    const event = prepaid.rows[0];
-    if (event) {
-      let meta: { nextBillingDate?: string; maintenanceCycle?: string } = {};
-      try {
-        meta = JSON.parse(String(event.metadata ?? '{}'));
-      } catch {
-        // The plan still shows, without a renewal date.
-      }
-      const next = dayToUnix(meta.nextBillingDate);
+    if (prepaid) {
+      const next = dayToUnix(prepaid.nextBillingDate);
       // Once the prepaid term has run out this is history, not the current plan.
       if (!next || next * 1000 > Date.now()) {
         prepaidPlan = {
           id: 'prepaid-maintenance',
           status: 'prepaid',
           planName: 'Website maintenance',
-          amount: Number(event.amount) || 0,
+          amount: Number(prepaid.amount) || 0,
           currency: 'usd',
-          interval: meta.maintenanceCycle === 'monthly' ? 'month' : 'year',
+          interval: prepaid.maintenanceCycle === 'monthly' ? 'month' : 'year',
           nextBillingDate: next,
           cancelAtPeriodEnd: false,
         };

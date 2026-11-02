@@ -1,8 +1,8 @@
-import type { Client } from '@libsql/client/web';
 import { googleAccessToken, googleCredentials, reportTimeZone } from './google';
 import { cleanPath, mergePaths, servicesFrom } from './paths';
 import config from '../../src/config/dashboard';
 import { firstLighthouse, type LighthouseCheck } from './lighthouse';
+import { pipeline } from './pipeline';
 
 /**
  * The monthly report: a snapshot of one finished calendar month.
@@ -269,18 +269,16 @@ async function searchConsole(month: string) {
 
 // ─── Submissions inbox ──────────────────────────────────────────────────────
 
-async function inquiries(db: Client, month: string) {
+async function inquiries(month: string) {
   const count = async (m: string) => {
-    const from = localMidnightUtc(monthBounds(m).start);
-    const to = localMidnightUtc(monthBounds(shiftMonth(m, 1)).start);
-    const rows = (
-      await db.execute({
-        sql: `SELECT kind, status, COUNT(*) AS n FROM form_submissions
-               WHERE client_id = ? AND created_at >= ? AND created_at < ?
-               GROUP BY kind, status`,
-        args: [config.clientId, from, to],
-      })
-    ).rows;
+    const params = new URLSearchParams({
+      counts: '1',
+      from: localMidnightUtc(monthBounds(m).start),
+      to: localMidnightUtc(monthBounds(shiftMonth(m, 1)).start),
+    });
+    const { counts: rows } = await pipeline<{ counts: { kind: string; status: string; n: number }[] }>(
+      `client-form-submissions?${params}`
+    );
     const sum = (pred: (r: (typeof rows)[number]) => boolean) =>
       rows.filter(pred).reduce((total, r) => total + (Number(r.n) || 0), 0);
     return {
@@ -347,7 +345,7 @@ function highlights(r: Omit<MonthlyReport, 'highlights'>, monthName: string): st
 
 // ─── Build and store ────────────────────────────────────────────────────────
 
-export async function buildReport(db: Client, month: string): Promise<MonthlyReport> {
+export async function buildReport(month: string): Promise<MonthlyReport> {
   // A failure in one source leaves its section empty rather than losing the
   // whole month; the reason is in the function log.
   const settle = async <T>(label: string, task: Promise<T>): Promise<T | null> => {
@@ -363,8 +361,8 @@ export async function buildReport(db: Client, month: string): Promise<MonthlyRep
   const [ga, search, forms, lighthouse] = await Promise.all([
     settle('analytics', analytics(month)),
     settle('search', searchConsole(month)),
-    inquiries(db, month),
-    settle('lighthouse', firstLighthouse(db, lighthouseFrom, lighthouseTo)),
+    inquiries(month),
+    settle('lighthouse', firstLighthouse(lighthouseFrom, lighthouseTo)),
   ]);
 
   const base: Omit<MonthlyReport, 'highlights'> = {
@@ -391,18 +389,22 @@ export async function buildReport(db: Client, month: string): Promise<MonthlyRep
   return { ...base, highlights: highlights(base, monthName) };
 }
 
-export async function reportExists(db: Client, month: string): Promise<boolean> {
-  const row = (
-    await db.execute({ sql: 'SELECT 1 FROM site_reports WHERE client_id = ? AND month = ?', args: [config.clientId, month] })
-  ).rows[0];
-  return Boolean(row);
+/** Whether the month already has a stored report, checked before any Google query runs. */
+export async function reportExists(month: string): Promise<boolean> {
+  const { months } = await pipeline<{ months: string[] }>('client-site-data?resource=reports');
+  return months.includes(month);
 }
 
-export async function saveReport(db: Client, report: MonthlyReport): Promise<void> {
-  await db.execute({
-    sql: `INSERT INTO site_reports (client_id, month, data, generated_at)
-          VALUES (?, ?, ?, datetime('now'))
-          ON CONFLICT (client_id, month) DO UPDATE SET data = excluded.data, generated_at = excluded.generated_at`,
-    args: [config.clientId, report.month, JSON.stringify(report)],
+/**
+ * Stored in the agency database through the Pipeline (client-site-data).
+ * Written once: a month that already has a report is kept, so a retried run
+ * never rewrites what the client has seen, unless `replace` is set. Returns
+ * whether it was written.
+ */
+export async function saveReport(report: MonthlyReport, { replace = false } = {}): Promise<boolean> {
+  const { written } = await pipeline<{ written: boolean }>('client-site-data?resource=report', {
+    method: 'PUT',
+    body: { month: report.month, data: report, replace },
   });
+  return written;
 }

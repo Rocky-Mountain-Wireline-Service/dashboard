@@ -1,6 +1,6 @@
-import type { Client } from '@libsql/client/web';
 import config from '../../src/config/dashboard';
 import { googleAccessToken, googleCredentials } from './google';
+import { pipeline } from './pipeline';
 
 /**
  * Google Lighthouse scores for the live site, through the PageSpeed Insights API.
@@ -127,22 +127,22 @@ export async function runLighthouse(): Promise<LighthouseCheck | null> {
   }
 }
 
-export async function saveLighthouse(db: Client, check: LighthouseCheck): Promise<void> {
-  await db.execute({
-    sql: `INSERT INTO site_checks (client_id, kind, data, checked_at) VALUES (?, 'lighthouse', ?, ?)`,
-    args: [config.clientId, JSON.stringify(check), check.checkedAt.slice(0, 19).replace('T', ' ')],
-  });
+/** Stored in the agency database through the Pipeline (client-site-data). */
+export async function saveLighthouse(check: LighthouseCheck): Promise<void> {
+  await pipeline('client-site-data?resource=lighthouse', { method: 'POST', body: { checkedAt: check.checkedAt, data: check } });
 }
 
-/** The earliest check taken between two dates (YYYY-MM-DD, inclusive), or null. */
-export async function firstLighthouse(db: Client, from: string, to: string): Promise<LighthouseCheck | null> {
-  const row = (
-    await db.execute({
-      sql: `SELECT data FROM site_checks
-             WHERE client_id = ? AND kind = 'lighthouse' AND checked_at >= ? AND checked_at < date(?, '+1 day')
-             ORDER BY checked_at ASC LIMIT 1`,
-      args: [config.clientId, from, to],
-    })
-  ).rows[0];
-  return row ? (JSON.parse(String(row.data)) as LighthouseCheck) : null;
+/**
+ * The check a month's report shows, taken between two dates (YYYY-MM-DD,
+ * inclusive): the earliest one that finished both phone and computer, else the
+ * earliest. Null when there is none.
+ */
+export async function firstLighthouse(from: string, to: string): Promise<LighthouseCheck | null> {
+  const params = new URLSearchParams({ resource: 'lighthouse', from, to });
+  return (await pipeline<{ lighthouse: LighthouseCheck | null }>(`client-site-data?${params}`)).lighthouse;
+}
+
+/** The most recent check, for the overview. */
+export async function latestLighthouse(): Promise<LighthouseCheck | null> {
+  return (await pipeline<{ lighthouse: LighthouseCheck | null }>('client-site-data?resource=lighthouse')).lighthouse;
 }

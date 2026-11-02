@@ -1,4 +1,4 @@
-import { tursoClient } from '../lib/turso';
+import { pipelineConfigured } from '../lib/pipeline';
 import { buildReport, lastCompleteMonth, reportExists, saveReport } from '../lib/report';
 
 /**
@@ -15,22 +15,22 @@ import { buildReport, lastCompleteMonth, reportExists, saveReport } from '../lib
  * Scheduled functions run only on the published production deploy.
  */
 export default async () => {
-  const db = tursoClient();
-  if (!db) {
-    console.error('Monthly report skipped: TURSO_CONFIG is not set.');
+  if (!pipelineConfigured()) {
+    console.error('Monthly report skipped: PIPELINE_FUNCTIONS_URL or PIPELINE_DASHBOARD_KEY is not set.');
     return new Response('not configured', { status: 500 });
   }
 
   const month = lastCompleteMonth();
-  if (await reportExists(db, month)) {
+  if (await reportExists(month)) {
     console.log(`Monthly report ${month} already exists; left as it is.`);
     return new Response('exists');
   }
 
-  const report = await buildReport(db, month);
-  await saveReport(db, report);
-  console.log(`Monthly report ${month} written.`);
-  return new Response('written');
+  const report = await buildReport(month);
+  // The Pipeline writes a month once, so a run racing this one cannot overwrite it.
+  const written = await saveReport(report);
+  console.log(written ? `Monthly report ${month} written.` : `Monthly report ${month} already existed; left as it is.`);
+  return new Response(written ? 'written' : 'exists');
 };
 
 // 14:00 UTC on the 3rd: early morning in Colorado.

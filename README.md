@@ -19,10 +19,10 @@ pnpm dev           # the app and its server functions, at http://localhost:5173
 |---|---|
 | Overview | Nothing. Links come from `src/config/dashboard.ts`. |
 | Analytics | A Google service account with Viewer access to the GA4 property. |
-| Monthly Reports | `TURSO_CONFIG`. Analytics and Search Console fill in their sections when connected. |
-| Form Submissions | `TURSO_CONFIG`, and the public site set up to save submissions (see below). |
+| Monthly Reports | The Pipeline connection (`PIPELINE_FUNCTIONS_URL`, `PIPELINE_DASHBOARD_KEY`). Analytics and Search Console fill in their sections when connected. |
+| Form Submissions | The Pipeline connection and `FORMS_INTAKE_SECRET`, and the public site set up to save submissions (see below). |
 | Contact & Support | A Resend API key and a verified sending domain. |
-| Billing | A Stripe key and the customer ID, with the customer portal switched on in Stripe. `TURSO_CONFIG` for offline payments. |
+| Billing | A Stripe key and the customer ID, with the customer portal switched on in Stripe. The Pipeline connection for offline payments. |
 | Content Kit | Hidden while `contentKit.enabled` is `false` in the config. |
 
 A section that is not set up is left out of the menu and has no route.
@@ -74,16 +74,19 @@ Google Lighthouse scores for the homepage, mobile and desktop, through the PageS
 
 ### Form submissions
 
-The public site saves each contact form and job application to the agency database as well as emailing it; this page lists them. A submission can be marked New, In progress, Done or Archived, given private notes, exported with the rest to CSV, or deleted. Résumés are stored with the submission and downloaded from here.
+The public site emails each contact form and job application, and posts it to this dashboard's `form-submissions` function, which stores it in the agency database through the Pipeline; this page lists them. A submission can be marked New, In progress, Done or Archived, given private notes, exported with the rest to CSV, or deleted. Résumés are stored with the submission and downloaded from here.
 
-- Tables: `db/form-submissions.sql`, applied with `pnpm db:migrate` (additive; safe to re-run).
-- The public site needs `TURSO_CONFIG` and `FORMS_CLIENT_ID` (this dashboard's `clientId`) in its own Netlify environment. Without them it emails only and nothing appears here.
-- Earlier submissions from Netlify Forms are brought in with `node scripts/import-netlify-forms.mjs <folder of CSV exports> --write` (dry run without `--write`; safe to re-run). It fetches the attached résumés while their links still work, marks the last 30 days New and the rest Done, and leaves out spam-trap rows, IP addresses and browser strings.
+- The public site posts with `X-Forms-Secret: <FORMS_INTAKE_SECRET>`. The same secret is set on both Netlify sites. It can add a submission to this inbox and do nothing else; without it the site emails only and nothing appears here.
+- The submissions from Netlify Forms before launch were imported on 2026-10-09 (`scripts/import-netlify-forms.mjs`, removed since; see git history).
 - Which inbox a form lands in comes from its name: anything with "employ", "applic", "career" or "job" is a job application; "contact", "sales", "inquiry" or "quote" is a sales contact.
 
 ### Offline payments
 
-Invoices paid by check or transfer are read from the agency database (`offline_invoices`, by this dashboard's client ID) and listed with the Stripe ones. A maintenance plan prepaid that way is shown as the subscription when Stripe has none running. Needs `TURSO_CONFIG`; turned on by `billing.showOfflineInvoices` in the config.
+Invoices paid by check or transfer are read through the Pipeline (`get-offline-invoices`, which accepts this dashboard's key only for its own client ID) and listed with the Stripe ones. A maintenance plan prepaid that way (`client-site-data?resource=prepaid`) is shown as the subscription when Stripe has none running. Needs the Pipeline connection; turned on by `billing.showOfflineInvoices` in the config.
+
+## The agency database
+
+This dashboard holds no database credential. Reports, Lighthouse tests, form submissions, offline invoices and the Content Kit are all read and written through the Pipeline's endpoints with this client's dashboard key (`PIPELINE_DASHBOARD_KEY`, issued on the client's page in the Pipeline). The Pipeline works out the client from the key, so nothing here can reach another client's records.
 
 ## Who can get in
 

@@ -9,13 +9,11 @@
     "build": "pnpm typecheck && vite build",
     "preview": "vite preview",
     "typecheck": "vue-tsc -b && tsc -p netlify/tsconfig.json",
-    "db:migrate": "node scripts/migrate.mjs",
     "reports:generate": "node scripts/generate-reports.mjs",
     "lighthouse:check": "node scripts/check-lighthouse.mjs"
   },
   "dependencies": {
     "@auth0/auth0-vue": "^2.3.3",
-    "@libsql/client": "^0.14.0",
     "@sanity/client": "^7.3.0",
     "@unhead/vue": "^2.1.17",
     "@vueuse/core": "^12.7.0",

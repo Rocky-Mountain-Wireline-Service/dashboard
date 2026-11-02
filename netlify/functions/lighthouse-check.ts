@@ -1,4 +1,4 @@
-import { tursoClient } from '../lib/turso';
+import { pipelineConfigured } from '../lib/pipeline';
 import { lighthouseConfigured, runLighthouse, saveLighthouse } from '../lib/lighthouse';
 
 /**
@@ -15,12 +15,11 @@ export default async () => {
     console.log('Lighthouse check skipped: no Google service account or PSI_API_KEY.');
     return new Response('not configured');
   }
-  const db = tursoClient();
-  if (!db) return new Response('database not configured', { status: 500 });
+  if (!pipelineConfigured()) return new Response('Pipeline connection not configured', { status: 500 });
 
   const check = await runLighthouse();
   if (!check) return new Response('no result', { status: 502 });
-  await saveLighthouse(db, check);
+  await saveLighthouse(check);
   console.log(`Lighthouse: mobile ${check.mobile?.scores.performance ?? '—'}, desktop ${check.desktop?.scores.performance ?? '—'}`);
   return new Response('saved');
 };

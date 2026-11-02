@@ -18,10 +18,9 @@ Object.assign(process.env, loadEnv('development', process.cwd(), ''));
 const vite = await createServer({ server: { middlewareMode: true }, appType: 'custom', logLevel: 'error' });
 
 try {
-  const { tursoClient } = await vite.ssrLoadModule('/netlify/lib/turso.ts');
+  const { pipelineConfigured } = await vite.ssrLoadModule('/netlify/lib/pipeline.ts');
   const { buildReport, saveReport, lastCompleteMonth, shiftMonth } = await vite.ssrLoadModule('/netlify/lib/report.ts');
-  const db = tursoClient();
-  if (!db) throw new Error('TURSO_CONFIG is not set in .env');
+  if (!pipelineConfigured()) throw new Error('PIPELINE_FUNCTIONS_URL and PIPELINE_DASHBOARD_KEY are not set in .env');
 
   const latest = lastCompleteMonth();
   const months = explicit
@@ -29,7 +28,7 @@ try {
     : Array.from({ length: Math.max(1, lastN) }, (_, i) => shiftMonth(latest, -i)).reverse();
 
   for (const month of months) {
-    const report = await buildReport(db, month);
+    const report = await buildReport(month);
     const t = report.traffic;
     const e = report.inquiries;
     console.log(
@@ -37,7 +36,7 @@ try {
         `${e.contactForms} contact, ${e.applications} applications, search ${report.search ? 'yes' : 'no'}`
     );
     for (const line of report.highlights) console.log(`   · ${line}`);
-    if (write) await saveReport(db, report);
+    if (write) await saveReport(report, { replace: true });
   }
   console.log(write ? `\nSaved ${months.length} report(s).` : '\nDry run. Add --write to save.');
 } finally {
